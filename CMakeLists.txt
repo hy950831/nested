@@ -31,25 +31,37 @@ cdl_ld("${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" capdl_spec
     ELF ${elf_files}
     DEPENDS ${elf_targets})
 
-# CapDLToolCFileGen(program_1_cspec program_1_cspec.c "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl"
-    # "${CAPDL_TOOL_BINARY}"
-    # MAX_IRQS ${CapDLLoaderMaxIRQs}
-    # DEPENDS ${program_1} install_capdl_tool "${CAPDL_TOOL_BINARY}"
-    # )
+add_executable(loader EXCLUDE_FROM_ALL loader.c)
+target_link_libraries(loader sel4tutorials)
 
-# BuildCapDLApplication2(
-        # C_SPEC "program_1_cspec.c"
-        # ELF ${elf_files}
-        # DEPENDS ${elf_targets} program_1_cspec
-        # OUTPUT "program_1_component"
-    # )
+CapDLToolCFileGen(program_1_cspec program_1_cspec.c "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl"
+    "${CAPDL_TOOL_BINARY}"
+    MAX_IRQS ${CapDLLoaderMaxIRQs}
+    DEPENDS ${program_1} install_capdl_tool "${CAPDL_TOOL_BINARY}"
+    )
 
-# cdl_ld("${CMAKE_CURRENT_BINARY_DIR}/spec2.cdl" capdl_spec2
-    # MANIFESTS ${CMAKE_CURRENT_SOURCE_DIR}/manifest2.py
-    # ELF program_1_component
-    # DEPENDS program_1_component)
 
-# DeclareRootserver("program_1_component")
-# DeclareCDLRootImage("${CMAKE_CURRENT_BINARY_DIR}/spec2.cdl" capdl_spec2 ELF program_1_component ELF_DEPENDS program_1_component)
+BuildCapDLApplication(
+        C_SPEC "program_1_cspec.c"
+        ELF ${elf_files}
+        DEPENDS ${elf_targets} program_1_cspec
+        OUTPUT "capdl-app"
+    )
 
-DeclareCDLRootImage("${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" capdl_spec ELF ${elf_files} ELF_DEPENDS ${elf_targets})
+
+list(APPEND cpio_files "$<TARGET_FILE:capdl-app>")
+MakeCPIO(archive_final.o ${cpio_files}
+    CPIO_SYMBOL _component_cpio
+)
+
+add_executable(loader_final EXCLUDE_FROM_ALL
+    loader.c
+    archive_final.o
+    )
+add_dependencies(loader_final ${elf_targets} capdl-app)
+target_link_libraries(loader_final Configuration muslc sel4 elf cpio sel4platsupport sel4utils sel4muslcsys)
+target_include_directories(loader_final PRIVATE $<TARGET_PROPERTY:capdl_app_properties,INCLUDE_DIRS>)
+
+DeclareRootserver(loader_final)
+
+# DeclareCDLRootImage("${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" capdl_spec ELF ${elf_files} ELF_DEPENDS ${elf_targets})
