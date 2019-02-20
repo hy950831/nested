@@ -8,7 +8,7 @@
 #include <sel4utils/sel4_zf_logif.h>
 
 extern seL4_CPtr free_slot;
-extern seL4_CPtr untyped_start;
+extern seL4_CPtr untyped_cap_start;
 
 void init_system(void);
 void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
@@ -49,10 +49,10 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
 
     // printf("tcb %lu cnode %lu\n", new_tcb, new_cnode);
     // create the cnode
-    int error = seL4_Untyped_Retype(untyped_start, seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
+    int error = seL4_Untyped_Retype(untyped_cap_start, seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
     ZF_LOGF_IF(error, "Failed to create child cnode");
 
-    error = seL4_Untyped_Retype(untyped_start, seL4_TCBObject, seL4_TCBBits, root_cnode, 0, 0, new_tcb, 1);
+    error = seL4_Untyped_Retype(untyped_cap_start, seL4_TCBObject, seL4_TCBBits, root_cnode, 0, 0, new_tcb, 1);
     ZF_LOGF_IF(error, "Failed to create tcb");
 
     seL4_DebugDumpScheduler();

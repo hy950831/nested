@@ -9,13 +9,13 @@ CNODE_SIZE=20
 # NOTE: this guard_size must be 64 - cnode_size
 GUARD_SIZE=64-CNODE_SIZE
 
-cnode_program_1 = CNode("cnode_program_1", CNODE_SIZE)
+cnode_program_1 = CNode("cnode_program_1_component", CNODE_SIZE)
 ep = Endpoint("endpoint")
 
 ipc_program_1_obj = Frame("ipc_program_1_obj", 4096)
 vspace_program_1 = PML4("vspace_program_1")
 
-tcb_program_1 = TCB("tcb_program_1",ipc_buffer_vaddr= 0x0,ip= 0x0,sp= 0x0,elf= "program_1",prio= 254,max_prio= 254,affinity= 0,init= [])
+tcb_program_1 = TCB("tcb_program_1_component",ipc_buffer_vaddr= 0x0,ip= 0x0,sp= 0x0,elf= "program_1_component",prio= 254,max_prio= 254,affinity= 0,init= [])
 
 cap_tcb = Cap(tcb_program_1)
 cap_cnode = Cap(cnode_program_1, guard_size=GUARD_SIZE)
@@ -48,7 +48,6 @@ stack_9_program_1_obj = Frame("stack_9_program_1_obj", 4096)
 
 obj = set([
 cnode_program_1,
-#  untyped_program_1,
 ep,
 ipc_program_1_obj,
 stack_0_program_1_obj,
@@ -76,32 +75,17 @@ objects.merge(spec)
 program_1_alloc = CSpaceAllocator(cnode_program_1)
 program_1_alloc.slot = 8
 
-cspaces = {'program_1':program_1_alloc}
+cspaces = {'program_1_component':program_1_alloc}
 
 program_1_addr_alloc = AddressSpaceAllocator('addr_allocator_program_1', vspace_program_1)
-program_1_addr_alloc._symbols = {
-'mainIpcBuffer': ([4096], [Cap(ipc_program_1_obj, read=True, write=True)]),
-'stack': (
-    [4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096, 4096],
-	[Cap(stack_0_program_1_obj, read=True, write=True),
-	 Cap(stack_1_program_1_obj, read=True, write=True),
-	 Cap(stack_2_program_1_obj, read=True, write=True),
-	 Cap(stack_3_program_1_obj, read=True, write=True),
-	 Cap(stack_4_program_1_obj, read=True, write=True),
-	 Cap(stack_5_program_1_obj, read=True, write=True),
-	 Cap(stack_6_program_1_obj, read=True, write=True),
-	 Cap(stack_7_program_1_obj, read=True, write=True),
-	 Cap(stack_8_program_1_obj, read=True, write=True),
-	 Cap(stack_9_program_1_obj, read=True, write=True),
-    ]),
-}
+program_1_addr_alloc._symbols = {}
 
 addr_spaces = {
-    'program_1': program_1_addr_alloc,
+    'program_1_component': program_1_addr_alloc,
                }
 
 cap_symbols = {
-    'program_1':
+    'program_1_component':
 	    [('tcb', 1),
 	     ('cnode', 2),
          ('untyped_cap_start', 0x13),
@@ -109,12 +93,10 @@ cap_symbols = {
         ],
                }
 
-region_symbols = {
-    'program_1': [('stack', 65536, '.bss'), ('mainIpcBuffer', 4096, '.bss')],
-                 }
+region_symbols = {}
 
 elfs =  {
-    'program_1': {'passive': False, 'filename': 'program_1.c'},
+    'program_1_component': {'passive': False, 'filename': 'program_1.c'},
          }
 
 print(pickle.dumps((objects, cspaces, addr_spaces, cap_symbols, region_symbols, elfs)))
