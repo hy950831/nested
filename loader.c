@@ -18,6 +18,7 @@
 #include <sel4utils/sel4_zf_logif.h>
 #include <sel4utils/util.h>
 #include <sel4utils/helpers.h>
+#include <sel4/sel4_arch/mapping.h>
 
 extern char _component_cpio[];
 static seL4_CPtr free_slot_start, free_slot_end;
@@ -91,8 +92,35 @@ sort_untypeds(seL4_BootInfo *bootinfo)
     }
 }
 
+
 static void init_elf(const char* elf_name)
 {
+    seL4_CPtr new_vroot = free_slot_start++;
+    int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, 0, 0, new_vroot, 1);
+    ZF_LOGF_IF(error, "Failed to create new vspace root");
+    error = seL4_X86_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_vroot);
+    ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
+
+    /* seL4_CPtr new_pdpt = free_slot_start++; */
+    /* error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pdpt, 1); */
+    /* ZF_LOGF_IF(error, "Failed to create new pdpt"); */
+    /* error = seL4_X86_PDPT_Map(new_pdpt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes); */
+    /* ZF_LOGF_IF(error, "Failed to map new pdpt %u", error); */
+
+    /* seL4_CPtr new_pd = free_slot_start++; */
+    /* error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pd, 1); */
+    /* ZF_LOGF_IF(error, "Failed to create new pd"); */
+    /* error = seL4_X86_PageDirectory_Map(new_pd, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes); */
+    /* ZF_LOGF_IF(error, "Failed to map new pd %u", error); */
+
+
+    /* seL4_CPtr new_pt = free_slot_start++; */
+    /* error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pt, 1); */
+    /* ZF_LOGF_IF(error, "Failed to create new pd"); */
+    /* error = seL4_X86_PageTable_Map(new_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes); */
+    /* ZF_LOGF_IF(error, "Failed to map new pd %u", error); */
+
+
     seL4_Word elf_size;
     void *elf_file = cpio_get_file(_component_cpio, elf_name, &elf_size);
     if (!elf_file) {
@@ -113,7 +141,6 @@ static void init_elf(const char* elf_name)
         }
 
         // here we should create frames for loadable sections
-
         ZF_LOGD("f_len is 0x%x", f_len);
         ZF_LOGD("dest is %p", dest);
         ZF_LOGD("src is %p", src);
@@ -137,32 +164,72 @@ static void init_elf(const char* elf_name)
 
         ZF_LOGD("For this section the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot);
 
-
         uintptr_t vaddr = dest;
+        // map the frames into addr
+        while (vaddr < dest + f_len) {
+            ZF_LOGD(".");
 
+            seL4_Word page = (vaddr - dest) / PAGE_SIZE_4K;
+            /* map frame into the loader's address space so we can write to it */
+            seL4_CPtr sel4_page = start_page_slot + page;
+            ZF_LOGD("Current page is %u", sel4_page);
+
+            seL4_CPtr sel4_page_pt;
+            size_t sel4_page_size = BIT(12);
+
+            seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
+
+            int error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr,
+                                           seL4_ReadWrite, attribs);
+            if (error == seL4_FailedLookup) {
+                seL4_CPtr new_pt = free_slot_start++;
+                error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pt, 1);
+                ZF_LOGF_IF(error, "Failed to create new pt");
+                error = seL4_X86_PageTable_Map(new_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
+                ZF_LOGF_IF(error, "Failed to map new page table");
+
+                ZF_LOGF_IFERR(error, "");
+                error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr,
+                                           seL4_ReadWrite, attribs);
+            }
+
+            if (error) {
+                /* Try and retrieve some useful information to help the user
+                 * diagnose the error.
+                 */
+                ZF_LOGD("Failed to map frame ");
+                seL4_ARCH_Page_GetAddress_t addr UNUSED = seL4_ARCH_Page_GetAddress(sel4_page);
+                if (addr.error) {
+                    ZF_LOGD("<unknown physical address (error = %d)>", addr.error);
+                } else {
+                    ZF_LOGD("%p", (void*)addr.paddr);
+                }
+                ZF_LOGD(" -> %p (error = %d)\n", (void*)copy_addr, error);
+                ZF_LOGF_IFERR(error, "");
+            }
+
+            /* copy until end of section or end of page */
+            size_t len = dest + f_len - vaddr;
+            if (len > sel4_page_size - (vaddr % sel4_page_size)) {
+                len = sel4_page_size - (vaddr % sel4_page_size);
+            }
+            memcpy((void *) (copy_addr + vaddr % sel4_page_size), (void *) (src + vaddr - dest), len);
+
+#ifdef CONFIG_ARCH_ARM
+            error = seL4_ARM_Page_Unify_Instruction(sel4_page, 0, sel4_page_size);
+            ZF_LOGF_IFERR(error, "");
+#endif
+            error = seL4_ARCH_Page_Unmap(sel4_page);
+            ZF_LOGF_IFERR(error, "");
+
+            if (sel4_page_pt != 0) {
+                error = seL4_ARCH_PageTable_Unmap(sel4_page_pt);
+                ZF_LOGF_IFERR(error, "");
+            }
+
+            vaddr += len;
+        }
     }
-
-    /* seL4_Word num_pages = (size) / 0x1000 + 1; */
-    /* ZF_LOGD("# of pages the elf needs is %u", num_pages); */
-
-    /* int start_page_slot = free_slot_start; */
-
-    /* int error; */
-    /* for (int i = 0; i < num_pages; ++i) { */
-    /* do { */
-    /* error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_4K, 0, seL4_CapInitThreadCNode, 0, 0, free_slot_start++, 1); */
-
-    /* if (error) { */
-    /* curr_untyped++; */
-    /* } else { */
-    /* ZF_LOGD("created page out of untyped %u in slot %u", curr_untyped, free_slot_start - 1); */
-    /* } */
-    /* } while (error); */
-    /* } */
-
-    /* int end_page_slot = free_slot_start; */
-
-    /* ZF_LOGD("For this elf the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot); */
 }
 
 static void
@@ -190,11 +257,11 @@ int main(int argc, char *argv[])
 
     printf("archive addr is %p\n", &_component_cpio);
 
-    seL4_Word addr = 0x400000ul;
-    ZF_LOGD("the pml4_slot is %u", PML4_SLOT(addr));
-    ZF_LOGD("the pdpt_slot is %u", PDPT_SLOT(addr));
-    ZF_LOGD("the pd_slot is %u", PD_SLOT(addr));
-    ZF_LOGD("the pt_slot is %u", PT_SLOT(addr));
+    /* seL4_Word addr = 0x400000ul; */
+    /* ZF_LOGD("the pml4_slot is %u", PML4_SLOT(addr)); */
+    /* ZF_LOGD("the pdpt_slot is %u", PDPT_SLOT(addr)); */
+    /* ZF_LOGD("the pd_slot is %u", PD_SLOT(addr)); */
+    /* ZF_LOGD("the pt_slot is %u", PT_SLOT(addr)); */
 
     init_system();
     sort_untypeds(bootinfo);
@@ -204,7 +271,6 @@ int main(int argc, char *argv[])
 
     seL4_CPtr new_pd = free_slot_start++;
     seL4_CPtr new_pt = free_slot_start++;
-
     int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, 0, 0, new_pd, 1);
     ZF_LOGF_IF(error, "Failed to create new vspace root");
     error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pt, 1);
@@ -402,107 +468,3 @@ void sayhello()
     printf("hello\n");
     while (1);
 }
-
-
-/* static void */
-/* elf_load_frames(const char *elf_name, CDL_ObjID pd, CDL_Model *spec, seL4_BootInfo *bootinfo) */
-/* { */
-/* // bootinfo is not used in this function actually */
-/* unsigned long elf_size; */
-/* void *elf_file = cpio_get_file(_capdl_archive, elf_name, &elf_size); */
-
-/* if (elf_file == NULL) { */
-/* ZF_LOGF("ELF file %s not found", elf_name); */
-/* } */
-
-/* if (elf_checkFile(elf_file) != 0) { */
-/* ZF_LOGF("Unable to read elf file %s at %p", elf_name, elf_file); */
-/* } */
-
-/* ZF_LOGD("   ELF loading %s (from %p)... \n", elf_name, elf_file); */
-
-/* for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) { */
-/* ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(elf_file, i)); */
-
-/* size_t f_len = elf_getProgramHeaderFileSize(elf_file, i); */
-/* uintptr_t dest = elf_getProgramHeaderVaddr(elf_file, i); */
-/* uintptr_t src = (uintptr_t) elf_file + elf_getProgramHeaderOffset(elf_file, i); */
-
-/* //Skip non loadable headers */
-/* if (elf_getProgramHeaderType(elf_file, i) != PT_LOAD) { */
-/* ZF_LOGD("Skipping non loadable header\n"); */
-/* continue; */
-/* } */
-/* uintptr_t vaddr = dest; */
-
-/* while (vaddr < dest + f_len) { */
-/* ZF_LOGD("."); */
-
-/* [> map frame into the loader's address space so we can write to it <] */
-/* seL4_CPtr sel4_page = get_frame_cap(pd, vaddr, spec); */
-/* seL4_CPtr sel4_page_pt = get_frame_pt(pd, vaddr, spec); */
-/* size_t sel4_page_size = get_frame_size(pd, vaddr, spec); */
-
-/* seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes; */
-/* #ifdef CONFIG_ARCH_ARM */
-/* attribs |= seL4_ARM_ExecuteNever; */
-/* #endif */
-
-/* int error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
-/* seL4_ReadWrite, attribs); */
-/* if (error == seL4_FailedLookup) { */
-/* error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
-/* seL4_ARCH_Default_VMAttributes); */
-/* ZF_LOGF_IFERR(error, ""); */
-/* error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
-/* seL4_ReadWrite, attribs); */
-/* } */
-/* if (error) { */
-/* Try and retrieve some useful information to help the user
- * diagnose the error.
- */
-/* ZF_LOGD("Failed to map frame "); */
-/* seL4_ARCH_Page_GetAddress_t addr UNUSED = seL4_ARCH_Page_GetAddress(sel4_page); */
-/* if (addr.error) { */
-/* ZF_LOGD("<unknown physical address (error = %d)>", addr.error); */
-/* } else { */
-/* ZF_LOGD("%p", (void*)addr.paddr); */
-/* } */
-/* ZF_LOGD(" -> %p (error = %d)\n", (void*)copy_addr, error); */
-/* ZF_LOGF_IFERR(error, ""); */
-/* } */
-
-/* [> copy until end of section or end of page <] */
-/* size_t len = dest + f_len - vaddr; */
-/* if (len > sel4_page_size - (vaddr % sel4_page_size)) { */
-/* len = sel4_page_size - (vaddr % sel4_page_size); */
-/* } */
-/* memcpy((void *) (copy_addr + vaddr % sel4_page_size), (void *) (src + vaddr - dest), len); */
-
-/* #ifdef CONFIG_ARCH_ARM */
-/* error = seL4_ARM_Page_Unify_Instruction(sel4_page, 0, sel4_page_size); */
-/* ZF_LOGF_IFERR(error, ""); */
-/* #endif */
-/* error = seL4_ARCH_Page_Unmap(sel4_page); */
-/* ZF_LOGF_IFERR(error, ""); */
-
-/* if (sel4_page_pt != 0) { */
-/* error = seL4_ARCH_PageTable_Unmap(sel4_page_pt); */
-/* ZF_LOGF_IFERR(error, ""); */
-/* } */
-
-/* vaddr += len; */
-/* } */
-
-/* Overwrite the section type so that next time this section is
- * encountered it will be skipped as it is not considered loadable. A
- * bit of a hack, but fine for now.
- */
-/* ZF_LOGD(" Marking header as loaded\n"); */
-/* if (((struct Elf32_Header*)elf_file)->e_ident[EI_CLASS] == ELFCLASS32) { */
-/* elf32_getProgramHeaderTable(elf_file)[i].p_type = PT_NULL; */
-/* } else if (((struct Elf64_Header*)elf_file)->e_ident[EI_CLASS] == ELFCLASS64) { */
-/* elf64_getProgramHeaderTable(elf_file)[i].p_type = PT_NULL; */
-/* } */
-/* } */
-/* } */
