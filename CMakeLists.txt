@@ -40,14 +40,12 @@ CapDLToolCFileGen(program_1_cspec program_1_cspec.c "${CMAKE_CURRENT_BINARY_DIR}
     DEPENDS ${program_1} install_capdl_tool "${CAPDL_TOOL_BINARY}"
     )
 
-
 BuildCapDLApplication(
         C_SPEC "program_1_cspec.c"
         ELF ${elf_files}
         DEPENDS ${elf_targets} program_1_cspec
         OUTPUT "capdl-app"
     )
-
 
 list(APPEND cpio_files "$<TARGET_FILE:capdl-app>")
 MakeCPIO(archive_final.o ${cpio_files}

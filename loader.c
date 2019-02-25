@@ -25,8 +25,9 @@ static seL4_BootInfo *bootinfo;
 #define copy_addr (ROUND_UP(((uintptr_t)_end) + (PAGE_SIZE_4K * 3), 0x1000000))
 static char copy_addr_with_pt[PAGE_SIZE_4K] __attribute__((aligned(PAGE_SIZE_4K)));
 
-void init_system(void);
-void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
+static void init_system(void);
+/* static void elf_load_frames(const char *elf_name, CDL_ObjID pd, CDL_Model *spec, seL4_BootInfo *bootinfo); */
+static void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
 void sayhello();
 
 #define PML4_SLOT(vaddr) ((vaddr >> (seL4_PDPTIndexBits + seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PML4IndexBits))
@@ -38,22 +39,185 @@ void sayhello();
 
 char* buffer[4096];
 
+static seL4_CPtr untyped_cptrs[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS];
+
 extern char __executable_start[];
 extern char _end[];
 
-seL4_BootInfo *bi;
+static seL4_Word curr_untyped = 0;
+
+static void
+sort_untypeds(seL4_BootInfo *bootinfo)
+{
+    seL4_CPtr untyped_start = bootinfo->untyped.start;
+    seL4_CPtr untyped_end = bootinfo->untyped.end;
+
+    ZF_LOGD("Sorting untypeds...\n");
+
+    seL4_Word count[CONFIG_WORD_SIZE] = {0};
+
+    // Count how many untypeds there are of each size.
+    for (seL4_Word untyped_index = 0; untyped_index != untyped_end - untyped_start; untyped_index++) {
+        if (!bootinfo->untypedList[untyped_index].isDevice) {
+            count[bootinfo->untypedList[untyped_index].sizeBits] += 1;
+        }
+    }
+
+    // Calculate the starting index for each untyped.
+    seL4_Word total = 0;
+    for (seL4_Word size = CONFIG_WORD_SIZE - 1; size != 0; size--) {
+        seL4_Word oldCount = count[size];
+        count[size] = total;
+        total += oldCount;
+    }
+
+    // Store untypeds in untyped_cptrs array.
+    for (seL4_Word untyped_index = 0; untyped_index != untyped_end - untyped_start; untyped_index++) {
+        if (bootinfo->untypedList[untyped_index].isDevice) {
+            ZF_LOGD("Untyped %3d (cptr=%p) (addr=%p) is of size %2d. Skipping as it is device\n",
+                    untyped_index, (void*)(untyped_start + untyped_index),
+                    (void*)bootinfo->untypedList[untyped_index].paddr,
+                    bootinfo->untypedList[untyped_index].sizeBits);
+        } else {
+            ZF_LOGD("Untyped %3d (cptr=%p) (addr=%p) is of size %2d. Placing in slot %d...\n",
+                    untyped_index, (void*)(untyped_start + untyped_index),
+                    (void*)bootinfo->untypedList[untyped_index].paddr,
+                    bootinfo->untypedList[untyped_index].sizeBits,
+                    count[bootinfo->untypedList[untyped_index].sizeBits]);
+
+            untyped_cptrs[count[bootinfo->untypedList[untyped_index].sizeBits]] = untyped_start +  untyped_index;
+            count[bootinfo->untypedList[untyped_index].sizeBits] += 1;
+        }
+    }
+}
+
+static void init_elf(const char* elf_name)
+{
+    seL4_Word elf_size;
+    void *elf_file = cpio_get_file(_component_cpio, elf_name, &elf_size);
+    if (!elf_file) {
+        ZF_LOGF("Didn't find the elf %s", elf_name);
+    }
+
+    ZF_LOGD("   ELF loading %s (from %p)... \n", elf_name, elf_file);
+    for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) {
+        ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(elf_file, i));
+
+        size_t f_len = elf_getProgramHeaderFileSize(elf_file, i);
+        uintptr_t dest = elf_getProgramHeaderVaddr(elf_file, i);
+        uintptr_t src = (uintptr_t) elf_file + elf_getProgramHeaderOffset(elf_file, i);
+
+        if (elf_getProgramHeaderType(elf_file, i) != PT_LOAD) {
+            ZF_LOGD("Skipping non loadable header");
+            continue;
+        }
+
+        // here we should create frames for loadable sections
+
+        ZF_LOGD("f_len is 0x%x", f_len);
+        ZF_LOGD("dest is %p", dest);
+        ZF_LOGD("src is %p", src);
+
+        seL4_Word num_pages = ROUND_UP(f_len, PAGE_SIZE_4K) / PAGE_SIZE_4K;
+        ZF_LOGD("# pages needed is %u", ROUND_UP(f_len, PAGE_SIZE_4K) / PAGE_SIZE_4K);
+
+        int start_page_slot = free_slot_start;
+        int error;
+        for (int i = 0; i < num_pages; ++i) {
+            do {
+                error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_4K, 0, seL4_CapInitThreadCNode, 0, 0, free_slot_start++, 1);
+
+                if (error) {
+                    curr_untyped++;
+                }
+            } while (error);
+        }
+
+        int end_page_slot = free_slot_start;
+
+        ZF_LOGD("For this section the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot);
+
+
+        uintptr_t vaddr = dest;
+
+    }
+
+    /* seL4_Word num_pages = (size) / 0x1000 + 1; */
+    /* ZF_LOGD("# of pages the elf needs is %u", num_pages); */
+
+    /* int start_page_slot = free_slot_start; */
+
+    /* int error; */
+    /* for (int i = 0; i < num_pages; ++i) { */
+    /* do { */
+    /* error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_4K, 0, seL4_CapInitThreadCNode, 0, 0, free_slot_start++, 1); */
+
+    /* if (error) { */
+    /* curr_untyped++; */
+    /* } else { */
+    /* ZF_LOGD("created page out of untyped %u in slot %u", curr_untyped, free_slot_start - 1); */
+    /* } */
+    /* } while (error); */
+    /* } */
+
+    /* int end_page_slot = free_slot_start; */
+
+    /* ZF_LOGD("For this elf the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot); */
+}
+
+static void
+init_elfs()
+{
+    ZF_LOGD("Initialising ELFs...\n");
+    ZF_LOGD(" Available ELFs:\n");
+    for (int j = 0; ; j++) {
+        const char *name = NULL;
+        unsigned long size;
+        void *ptr = cpio_get_entry(_component_cpio, j, &name, &size);
+        if (ptr == NULL) {
+            break;
+        }
+        ZF_LOGD("  %d: %s, offset: %p, size: %lu\n", j, name,
+                (void*)((uintptr_t)ptr - (uintptr_t)_component_cpio), size);
+
+        init_elf(name);
+    }
+}
 
 int main(int argc, char *argv[])
 {
     platsupport_serial_setup_bootinfo_failsafe();
+
     printf("archive addr is %p\n", &_component_cpio);
 
+    seL4_Word addr = 0x400000ul;
+    ZF_LOGD("the pml4_slot is %u", PML4_SLOT(addr));
+    ZF_LOGD("the pdpt_slot is %u", PDPT_SLOT(addr));
+    ZF_LOGD("the pd_slot is %u", PD_SLOT(addr));
+    ZF_LOGD("the pt_slot is %u", PT_SLOT(addr));
 
     init_system();
+    sort_untypeds(bootinfo);
+    init_elfs();
 
     seL4_DebugDumpScheduler();
 
-    create_child(seL4_CapInitThreadCNode, seL4_CapInitThreadVSpace, seL4_CapInitThreadTCB);
+    seL4_CPtr new_pd = free_slot_start++;
+    seL4_CPtr new_pt = free_slot_start++;
+
+    int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, 0, 0, new_pd, 1);
+    ZF_LOGF_IF(error, "Failed to create new vspace root");
+    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pt, 1);
+    ZF_LOGF_IF(error, "Failed to create vspace page table");
+    error = seL4_X86_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_pd);
+    ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
+
+
+
+    /* assert(!"stop"); */
+
+    create_child(seL4_CapInitThreadCNode, new_pd, seL4_CapInitThreadTCB);
+
     seL4_DebugDumpScheduler();
 
     printf("Done, suspend init thread\n");
@@ -86,7 +250,7 @@ void init_copy_frame()
         (ROUND_UP((uintptr_t)&_end, PAGE_SIZE_4K) -
          (uintptr_t)&__executable_start) / PAGE_SIZE_4K;
 
-    ZF_LOGD("reported %u frames, measured %u frams", num_user_image_frames_reported, num_user_image_frames_measured);
+    ZF_LOGD("reported %u frames, measured %u frames", num_user_image_frames_reported, num_user_image_frames_measured);
 
     if (num_user_image_frames_reported < num_user_image_frames_measured) {
         ZF_LOGD("Too few frames caps in bootinfo to back user image");
@@ -106,7 +270,7 @@ void init_copy_frame()
     uintptr_t lowest_mapped_vaddr =
         (uintptr_t)&__executable_start - additional_user_image_bytes;
     ZF_LOGD("lowest mapped vaddr is %p", lowest_mapped_vaddr);
-    ZF_LOGD("lowest mapped # frame is %u", lowest_mapped_vaddr/PAGE_SIZE_4K);
+    ZF_LOGD("lowest mapped # frame is %u", lowest_mapped_vaddr / PAGE_SIZE_4K);
 
     ZF_LOGD("copy_addr_with_pt addr is %p", (uintptr_t)copy_addr_with_pt);
     ZF_LOGD("copy_addr_with_pt # frame is %u", (uintptr_t)copy_addr_with_pt / PAGE_SIZE_4K);
@@ -148,28 +312,6 @@ void init_copy_frame()
     }
 }
 
-static void
-init_elfs()
-{
-    ZF_LOGD("Initialising ELFs...\n");
-    ZF_LOGD(" Available ELFs:\n");
-    for (int j = 0; ; j++) {
-        const char *name = NULL;
-        unsigned long size;
-        void *ptr = cpio_get_entry(_component_cpio, j, &name, &size);
-        if (ptr == NULL) {
-            break;
-        }
-        ZF_LOGD("  %d: %s, offset: %p, size: %lu\n", j, name,
-                (void*)((uintptr_t)ptr - (uintptr_t)_component_cpio), size);
-    }
-    /* for (CDL_ObjID obj_id = 0; obj_id < spec->num; obj_id++) { */
-        /* if (spec->objects[obj_id].type == CDL_TCB) { */
-            /* ZF_LOGD(" Initialising ELF for %s...\n", CDL_Obj_Name(&spec->objects[obj_id])); */
-            /* init_elf(spec, obj_id, bootinfo); */
-        /* } */
-    /* } */
-}
 
 static void
 parse_bootinfo(seL4_BootInfo *bootinfo)
@@ -210,51 +352,157 @@ parse_bootinfo(seL4_BootInfo *bootinfo)
     ZF_LOGD("Loader is running in domain %d\n", bootinfo->initThreadDomain);
 }
 
-void init_system(void) {
+static void init_system(void)
+{
     bootinfo = platsupport_get_bootinfo();
     simple_t simple;
     simple_default_init_bootinfo(&simple, bootinfo);
     parse_bootinfo(bootinfo);
     init_copy_frame();
-    init_elfs();
 }
 
-void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb) {
+
+static void
+create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
+{
     seL4_CPtr new_tcb = free_slot_start++;
     seL4_CPtr new_cnode = free_slot_start++;
-    seL4_CPtr untyped_cap_start = bootinfo->untyped.start;
 
-    // printf("tcb %lu cnode %lu\n", new_tcb, new_cnode);
     // create the cnode
-    int error = seL4_Untyped_Retype(untyped_cap_start, seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
+    int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
     ZF_LOGF_IF(error, "Failed to create child cnode");
 
-    error = seL4_Untyped_Retype(untyped_cap_start, seL4_TCBObject, seL4_TCBBits, root_cnode, 0, 0, new_tcb, 1);
+    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_TCBObject, seL4_TCBBits, root_cnode, 0, 0, new_tcb, 1);
     ZF_LOGF_IF(error, "Failed to create tcb");
+
+    seL4_DebugNameThread(new_tcb, "capdl-app");
 
     seL4_DebugDumpScheduler();
 
-    error = seL4_TCB_Configure(new_tcb, 0, new_cnode, 0, root_vspace, 0, 0, 0);
+    error = seL4_TCB_Configure(new_tcb, 0, new_cnode, 0, new_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
 
     error = seL4_TCB_SetPriority(new_tcb, root_tcb, 254);
     ZF_LOGF_IF(error, "Failed to set priority");
 
     seL4_UserContext regs = {0};
-    error = seL4_TCB_ReadRegisters(new_tcb, 0, 0, sizeof(regs)/sizeof(seL4_Word), &regs);
+    error = seL4_TCB_ReadRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to read registers");
     sel4utils_arch_init_local_context((void*)sayhello, 0, 0, 0, buffer, &regs);
 
-    error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs)/sizeof(seL4_Word), &regs);
+    error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to write registers");
 
     error = seL4_TCB_Resume(new_tcb);
     ZF_LOGF_IF(error, "Failed to resume tcb");
 }
 
-void sayhello(){
+void sayhello()
+{
     printf("hello\n");
-    while(1);
+    while (1);
 }
 
 
+/* static void */
+/* elf_load_frames(const char *elf_name, CDL_ObjID pd, CDL_Model *spec, seL4_BootInfo *bootinfo) */
+/* { */
+/* // bootinfo is not used in this function actually */
+/* unsigned long elf_size; */
+/* void *elf_file = cpio_get_file(_capdl_archive, elf_name, &elf_size); */
+
+/* if (elf_file == NULL) { */
+/* ZF_LOGF("ELF file %s not found", elf_name); */
+/* } */
+
+/* if (elf_checkFile(elf_file) != 0) { */
+/* ZF_LOGF("Unable to read elf file %s at %p", elf_name, elf_file); */
+/* } */
+
+/* ZF_LOGD("   ELF loading %s (from %p)... \n", elf_name, elf_file); */
+
+/* for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) { */
+/* ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(elf_file, i)); */
+
+/* size_t f_len = elf_getProgramHeaderFileSize(elf_file, i); */
+/* uintptr_t dest = elf_getProgramHeaderVaddr(elf_file, i); */
+/* uintptr_t src = (uintptr_t) elf_file + elf_getProgramHeaderOffset(elf_file, i); */
+
+/* //Skip non loadable headers */
+/* if (elf_getProgramHeaderType(elf_file, i) != PT_LOAD) { */
+/* ZF_LOGD("Skipping non loadable header\n"); */
+/* continue; */
+/* } */
+/* uintptr_t vaddr = dest; */
+
+/* while (vaddr < dest + f_len) { */
+/* ZF_LOGD("."); */
+
+/* [> map frame into the loader's address space so we can write to it <] */
+/* seL4_CPtr sel4_page = get_frame_cap(pd, vaddr, spec); */
+/* seL4_CPtr sel4_page_pt = get_frame_pt(pd, vaddr, spec); */
+/* size_t sel4_page_size = get_frame_size(pd, vaddr, spec); */
+
+/* seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes; */
+/* #ifdef CONFIG_ARCH_ARM */
+/* attribs |= seL4_ARM_ExecuteNever; */
+/* #endif */
+
+/* int error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
+/* seL4_ReadWrite, attribs); */
+/* if (error == seL4_FailedLookup) { */
+/* error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
+/* seL4_ARCH_Default_VMAttributes); */
+/* ZF_LOGF_IFERR(error, ""); */
+/* error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadPD, (seL4_Word)copy_addr, */
+/* seL4_ReadWrite, attribs); */
+/* } */
+/* if (error) { */
+/* Try and retrieve some useful information to help the user
+ * diagnose the error.
+ */
+/* ZF_LOGD("Failed to map frame "); */
+/* seL4_ARCH_Page_GetAddress_t addr UNUSED = seL4_ARCH_Page_GetAddress(sel4_page); */
+/* if (addr.error) { */
+/* ZF_LOGD("<unknown physical address (error = %d)>", addr.error); */
+/* } else { */
+/* ZF_LOGD("%p", (void*)addr.paddr); */
+/* } */
+/* ZF_LOGD(" -> %p (error = %d)\n", (void*)copy_addr, error); */
+/* ZF_LOGF_IFERR(error, ""); */
+/* } */
+
+/* [> copy until end of section or end of page <] */
+/* size_t len = dest + f_len - vaddr; */
+/* if (len > sel4_page_size - (vaddr % sel4_page_size)) { */
+/* len = sel4_page_size - (vaddr % sel4_page_size); */
+/* } */
+/* memcpy((void *) (copy_addr + vaddr % sel4_page_size), (void *) (src + vaddr - dest), len); */
+
+/* #ifdef CONFIG_ARCH_ARM */
+/* error = seL4_ARM_Page_Unify_Instruction(sel4_page, 0, sel4_page_size); */
+/* ZF_LOGF_IFERR(error, ""); */
+/* #endif */
+/* error = seL4_ARCH_Page_Unmap(sel4_page); */
+/* ZF_LOGF_IFERR(error, ""); */
+
+/* if (sel4_page_pt != 0) { */
+/* error = seL4_ARCH_PageTable_Unmap(sel4_page_pt); */
+/* ZF_LOGF_IFERR(error, ""); */
+/* } */
+
+/* vaddr += len; */
+/* } */
+
+/* Overwrite the section type so that next time this section is
+ * encountered it will be skipped as it is not considered loadable. A
+ * bit of a hack, but fine for now.
+ */
+/* ZF_LOGD(" Marking header as loaded\n"); */
+/* if (((struct Elf32_Header*)elf_file)->e_ident[EI_CLASS] == ELFCLASS32) { */
+/* elf32_getProgramHeaderTable(elf_file)[i].p_type = PT_NULL; */
+/* } else if (((struct Elf64_Header*)elf_file)->e_ident[EI_CLASS] == ELFCLASS64) { */
+/* elf64_getProgramHeaderTable(elf_file)[i].p_type = PT_NULL; */
+/* } */
+/* } */
+/* } */
