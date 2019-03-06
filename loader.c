@@ -28,7 +28,6 @@ static char copy_addr_with_pt[PAGE_SIZE_4K] __attribute__((aligned(PAGE_SIZE_4K)
 
 static void init_system(void);
 static void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
-void sayhello();
 
 #define PML4_SLOT(vaddr) ((vaddr >> (seL4_PDPTIndexBits + seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PML4IndexBits))
 #define PDPT_SLOT(vaddr) ((vaddr >> (seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PDPTIndexBits))
@@ -37,20 +36,31 @@ void sayhello();
 #define PGD_SLOT(vaddr) ((vaddr >> (seL4_PUDIndexBits + seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PGDIndexBits))
 #define PUD_SLOT(vaddr) ((vaddr >> (seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PUDIndexBits))
 
-char* buffer[4096];
-
 static seL4_CPtr untyped_cptrs[CONFIG_MAX_NUM_BOOTINFO_UNTYPED_CAPS];
-
 extern char __executable_start[];
 extern char _end[];
 
 static seL4_Word curr_untyped = 0;
+static seL4_Word num_untyped = 0;
+
+static int create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
+{
+    int error;
+    do {
+        error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], type, size, root, 0, 0, slot, 1);
+        if (error) {
+            curr_untyped++;
+        }
+    } while (error && curr_untyped < num_untyped);
+    return error;
+}
 
 static void
 sort_untypeds(seL4_BootInfo *bootinfo)
 {
     seL4_CPtr untyped_start = bootinfo->untyped.start;
     seL4_CPtr untyped_end = bootinfo->untyped.end;
+    num_untyped = untyped_end - untyped_start;
 
     ZF_LOGD("Sorting untypeds...\n");
 
@@ -96,7 +106,7 @@ seL4_CPtr new_vroot;
 static void load_elf(const char* elf_name)
 {
     new_vroot = free_slot_start++;
-    int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, 0, 0, new_vroot, 1);
+    int error = create_object(seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, new_vroot);
     ZF_LOGF_IF(error, "Failed to create new vspace root");
     error = seL4_X86_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_vroot);
     ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
@@ -131,13 +141,7 @@ static void load_elf(const char* elf_name)
         int start_page_slot = free_slot_start;
         int error;
         for (int i = 0; i < num_pages; ++i) {
-            do {
-                error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_4K, 0, seL4_CapInitThreadCNode, 0, 0, free_slot_start++, 1);
-
-                if (error) {
-                    curr_untyped++;
-                }
-            } while (error);
+            create_object(seL4_X86_4K, 0, seL4_CapInitThreadCNode, free_slot_start++);
         }
 
         int end_page_slot = free_slot_start;
@@ -153,10 +157,10 @@ static void load_elf(const char* elf_name)
             /* map frame into the loader's address space so we can write to it */
             seL4_CPtr sel4_page = start_page_slot + page;
 
-            ZF_LOGD("Current page : %u vaddr : %u target: %u", sel4_page, vaddr, dest + f_len);
+            ZF_LOGD("Current page :%u vaddr :0x%x target:0x%x", sel4_page, vaddr, dest + f_len);
 
             seL4_CPtr sel4_page_pt = 0;
-            size_t sel4_page_size = BIT(12);
+            size_t sel4_page_size = PAGE_SIZE_4K;
 
             seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
 
@@ -164,7 +168,7 @@ static void load_elf(const char* elf_name)
 
             if (error == seL4_FailedLookup) {
                 sel4_page_pt = free_slot_start++;
-                error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, 0, 0, sel4_page_pt, 1);
+                error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 ZF_LOGF_IF(error, "Failed to create new pt");
                 error = seL4_X86_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
                 ZF_LOGF_IF(error, "Failed to map new pt");
@@ -211,48 +215,43 @@ static void load_elf(const char* elf_name)
         vaddr = dest;
         while (vaddr < dest + f_len) {
             // here we map the frames into the new vspace
-
             size_t len = dest + f_len - vaddr;
-            size_t sel4_page_size = BIT(12);
+            size_t sel4_page_size = PAGE_SIZE_4K;
 
             seL4_Word page = (vaddr / PAGE_SIZE_4K - dest / PAGE_SIZE_4K);
-            ZF_LOGD("Page detail: len = %u vaddr = %u dest = %u page = %u", len, vaddr, dest, page);
             /* map frame into the loader's address space so we can write to it */
             seL4_CPtr sel4_page = start_page_slot + page;
+            ZF_LOGD("Page detail: lenleft = 0x%x vaddr = 0x%x dest = 0x%x page = %u", len, vaddr, dest, sel4_page);
             ZF_LOGD("While mapping pages into new vspace current page is %u", sel4_page);
 
             if (len > sel4_page_size - (vaddr % sel4_page_size)) {
                 len = sel4_page_size - (vaddr % sel4_page_size);
             }
 
-            /* if (len > (vaddr % sel4_page_size)) { */
-            /* len = (vaddr % sel4_page_size); */
-            /* } */
-
             seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
 
-            error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr / PAGE_SIZE_4K * PAGE_SIZE_4K, seL4_ReadWrite, attribs);
+            error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_ReadWrite, attribs);
             if (error == seL4_FailedLookup) {
                 seL4_Word sel4_page_pt = free_slot_start++;
-                error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, 0, 0, sel4_page_pt, 1);
+                error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 ZF_LOGF_IF(error, "Failed to create new pt");
                 error = seL4_X86_PageTable_Map(sel4_page_pt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
 
                 if (error) {
                     seL4_CPtr new_pdpt = free_slot_start++;
-                    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pdpt, 1);
+                    error = create_object(seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, new_pdpt);
                     ZF_LOGF_IF(error, "Failed to create new pdpt");
                     error = seL4_X86_PDPT_Map(new_pdpt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
 
                     seL4_CPtr new_pd = free_slot_start++;
-                    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pd, 1);
+                    error = create_object(seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, new_pd);
                     ZF_LOGF_IF(error, "Failed to create new pdpt");
                     error = seL4_X86_PageDirectory_Map(new_pd, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
 
                     seL4_CPtr new_pt = free_slot_start++;
-                    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, 0, 0, new_pt, 1);
+                    error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, new_pt);
                     ZF_LOGF_IF(error, "Failed to create new pdpt");
                     error = seL4_X86_PageTable_Map(new_pt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
@@ -448,25 +447,108 @@ static void init_system(void)
     init_copy_frame();
 }
 
+static int put_cap_into_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
+{
+    int error =  0;
+    error = seL4_CNode_Copy(
+                cnode,
+                seL4_CapInitThreadTCB,
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode,
+                tcb,
+                CONFIG_WORD_SIZE,
+                seL4_AllRights
+            );
+    ZF_LOGF_IF(error, "Failed to move tcb cap into cnode")
+
+    error = seL4_CNode_Copy(
+                cnode, // to cnode
+                seL4_CapInitThreadCNode, // to slot
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode, // from cnode
+                cnode, // from slot
+                CONFIG_WORD_SIZE,
+                seL4_AllRights
+            );
+    ZF_LOGF_IF(error, "Failed to move cnode cap into cnode")
+
+    error = seL4_CNode_Copy(
+                cnode, // to cnode
+                seL4_CapInitThreadVSpace, // to slot
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode, // from cnode
+                vroot, // from slot
+                CONFIG_WORD_SIZE,
+                seL4_AllRights
+            );
+    ZF_LOGF_IF(error, "Failed to move cnode cap into cnode")
+}
+
+static int put_bootinfo(seL4_CPtr vspace) {
+    return 0;
+}
+
 
 static void
 create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
 {
+    int error;
     seL4_CPtr new_tcb = free_slot_start++;
     seL4_CPtr new_cnode = free_slot_start++;
+    seL4_Word init_thread_cnode_size = bootinfo->initThreadCNodeSizeBits;
+
+    for (int i = 0; i < 400; ++i) {
+        seL4_CPtr new_frame = free_slot_start++;
+        error = create_object(seL4_X86_4K, 0, root_cnode, new_frame);
+        ZF_LOGF_IF(error, "failed to create new frame, possibily not enough memory");
+
+        seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
+        error = seL4_ARCH_Page_Map(new_frame, new_vspace, (seL4_Word)0x49e000 + i * 0x1000, seL4_ReadWrite, attribs);
+        if (error) {
+            seL4_CPtr sel4_page_pt = free_slot_start++;
+            error = create_object(seL4_X86_PageTableObject, 0, root_cnode, sel4_page_pt);
+
+            ZF_LOGF_IF(error, "Failed to create new pt");
+            error = seL4_X86_PageTable_Map(sel4_page_pt, new_vroot, (seL4_Word)0x49e000 + i * 0x1000, seL4_ARCH_Default_VMAttributes);
+            ZF_LOGF_IF(error, "Failed to map new pt")
+            error = seL4_ARCH_Page_Map(new_frame, new_vspace, (seL4_Word)0x48c000 + i * 0x1000, seL4_ReadWrite, attribs);
+        }
+        ZF_LOGF_IF(error, "Failed to map frame");
+    }
+
+    seL4_Word cnode_size = 21;
 
     // create the cnode
-    int error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
+    error = create_object(seL4_CapTableObject, cnode_size, root_cnode, new_cnode);
     ZF_LOGF_IF(error, "Failed to create child cnode");
 
-    error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], seL4_TCBObject, seL4_TCBBits, root_cnode, 0, 0, new_tcb, 1);
+    // here we should also put all needed capabilities into the new cnode
+    error = create_object(seL4_TCBObject, seL4_TCBBits, root_cnode, new_tcb);
     ZF_LOGF_IF(error, "Failed to create tcb");
 
     seL4_DebugNameThread(new_tcb, "capdl-app");
 
     seL4_DebugDumpScheduler();
 
-    error = seL4_TCB_Configure(new_tcb, 0, new_cnode, 0, new_vspace, 0, 0, 0);
+    seL4_CPtr minted_new_cnode = free_slot_start++;
+    error = seL4_CNode_Mint(
+                seL4_CapInitThreadCNode,
+                minted_new_cnode,
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode,
+                new_cnode,
+                CONFIG_WORD_SIZE,
+                seL4_AllRights,
+                seL4_CNode_CapData_new(0, 64 - cnode_size).words[0]
+            );
+    ZF_LOGF_IF(error, "Failed to mint the new cnode cap");
+
+    //XXX: here we put the capbilities into the new cnode
+    put_cap_into_cnode(minted_new_cnode, new_tcb, new_vspace);
+    //XXX: here we put the bootinfo frame into the new tcb
+    put_bootinfo(new_vspace);
+
+    error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
 
     error = seL4_TCB_SetPriority(new_tcb, root_tcb, 254);
@@ -475,17 +557,14 @@ create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
     seL4_UserContext regs = {0};
     error = seL4_TCB_ReadRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to read registers");
-    sel4utils_arch_init_local_context((void*)0x40a2a5, 0, 0, 0, buffer, &regs);
+
+    // here we set the ip to _sel4_start since we set the entry point to _sel4_start, since it
+    // will set the stack pointer, we don't need to pass in a stack pointer in here
+    sel4utils_arch_init_local_context((void*)0x410000, 0, 0, 0, 0, &regs);
 
     error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to write registers");
 
     error = seL4_TCB_Resume(new_tcb);
     ZF_LOGF_IF(error, "Failed to resume tcb");
-}
-
-void sayhello()
-{
-    printf("hello\n");
-    while (1);
 }

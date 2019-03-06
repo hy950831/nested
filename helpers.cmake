@@ -19,3 +19,7 @@ function(CreateCDLRootImage cdl cdl_target)
 
     DeclareRootserver("capdl-loader")
 endfunction()
+
+function(SetSeL4StartComponent target)
+    set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " -u _sel4_start_component -e _sel4_start_component ")
+endfunction(SetSeL4StartComponent)

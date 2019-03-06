@@ -12,6 +12,7 @@
 #
 ImportCapDL()
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -u __vsyscall_ptr")
+include(helpers.cmake)
 
 
 cdl_pp(${CMAKE_CURRENT_SOURCE_DIR}/manifest.py cdl_pp_target
@@ -47,15 +48,19 @@ BuildCapDLApplication(
         OUTPUT "capdl-app"
     )
 
+SetSeL4StartComponent(capdl-app)
+
 list(APPEND cpio_files "$<TARGET_FILE:capdl-app>")
 MakeCPIO(archive_final.o ${cpio_files}
     CPIO_SYMBOL _component_cpio
 )
 
+
 add_executable(loader_final EXCLUDE_FROM_ALL
     loader.c
     archive_final.o
     )
+
 add_dependencies(loader_final ${elf_targets} capdl-app)
 target_link_libraries(loader_final Configuration muslc sel4 elf cpio sel4platsupport sel4utils sel4muslcsys)
 target_include_directories(loader_final PRIVATE $<TARGET_PROPERTY:capdl_app_properties,INCLUDE_DIRS>)
