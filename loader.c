@@ -43,7 +43,7 @@ extern char _end[];
 static seL4_Word curr_untyped = 0;
 static seL4_Word num_untyped = 0;
 
-static int create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
+static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
 {
     int error;
     do {
@@ -52,7 +52,10 @@ static int create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Wo
             curr_untyped++;
         }
     } while (error && curr_untyped < num_untyped);
-    return error;
+
+    if (error) {
+        ZF_LOGF("out of untyped memory");
+    }
 }
 
 static void
@@ -106,8 +109,8 @@ seL4_CPtr new_vroot;
 static void load_elf(const char* elf_name)
 {
     new_vroot = free_slot_start++;
-    int error = create_object(seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, new_vroot);
-    ZF_LOGF_IF(error, "Failed to create new vspace root");
+    int error;
+    create_object(seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, new_vroot);
     error = seL4_X86_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_vroot);
     ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
 
@@ -121,7 +124,8 @@ static void load_elf(const char* elf_name)
     for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) {
         ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(elf_file, i));
 
-        size_t f_len = elf_getProgramHeaderFileSize(elf_file, i);
+        size_t f_len = elf_getProgramHeaderMemorySize(elf_file, i);
+        size_t f_len_file = elf_getProgramHeaderFileSize(elf_file, i);
         uintptr_t dest = elf_getProgramHeaderVaddr(elf_file, i);
         uintptr_t src = (uintptr_t) elf_file + elf_getProgramHeaderOffset(elf_file, i);
 
@@ -143,7 +147,6 @@ static void load_elf(const char* elf_name)
         for (int i = 0; i < num_pages; ++i) {
             create_object(seL4_X86_4K, 0, seL4_CapInitThreadCNode, free_slot_start++);
         }
-
         int end_page_slot = free_slot_start;
         ZF_LOGD("For this section the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot);
 
@@ -168,12 +171,9 @@ static void load_elf(const char* elf_name)
 
             if (error == seL4_FailedLookup) {
                 sel4_page_pt = free_slot_start++;
-                error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
-                ZF_LOGF_IF(error, "Failed to create new pt");
+                create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 error = seL4_X86_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
                 ZF_LOGF_IF(error, "Failed to map new pt");
-
-                ZF_LOGF_IFERR(error, "");
                 error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, attribs);
             }
 
@@ -197,7 +197,11 @@ static void load_elf(const char* elf_name)
             if (len > sel4_page_size - (vaddr % sel4_page_size)) {
                 len = sel4_page_size - (vaddr % sel4_page_size);
             }
-            memcpy((void *) (copy_addr + vaddr % sel4_page_size), (void *) (src + vaddr - dest), len);
+
+            // only copy content with the file(leave .bss section part frames blank)
+            if (vaddr < f_len_file + dest) {
+                memcpy((void *) (copy_addr + vaddr % sel4_page_size), (void *) (src + vaddr - dest), len);
+            }
 
             error = seL4_ARCH_Page_Unmap(sel4_page);
             ZF_LOGF_IFERR(error, "");
@@ -233,26 +237,22 @@ static void load_elf(const char* elf_name)
             error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_ReadWrite, attribs);
             if (error == seL4_FailedLookup) {
                 seL4_Word sel4_page_pt = free_slot_start++;
-                error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
-                ZF_LOGF_IF(error, "Failed to create new pt");
+                create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 error = seL4_X86_PageTable_Map(sel4_page_pt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
 
                 if (error) {
                     seL4_CPtr new_pdpt = free_slot_start++;
-                    error = create_object(seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, new_pdpt);
-                    ZF_LOGF_IF(error, "Failed to create new pdpt");
+                    create_object(seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, new_pdpt);
                     error = seL4_X86_PDPT_Map(new_pdpt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
 
                     seL4_CPtr new_pd = free_slot_start++;
-                    error = create_object(seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, new_pd);
-                    ZF_LOGF_IF(error, "Failed to create new pdpt");
+                    create_object(seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, new_pd);
                     error = seL4_X86_PageDirectory_Map(new_pd, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
 
                     seL4_CPtr new_pt = free_slot_start++;
-                    error = create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, new_pt);
-                    ZF_LOGF_IF(error, "Failed to create new pdpt");
+                    create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, new_pt);
                     error = seL4_X86_PageTable_Map(new_pt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
                     ZF_LOGF_IF(error, "Failed to map pdpt");
                 }
@@ -268,7 +268,6 @@ static void load_elf(const char* elf_name)
         }
     }
 
-    /* init_vspace(); */
 }
 
 static void
@@ -484,8 +483,53 @@ static int put_cap_into_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
     ZF_LOGF_IF(error, "Failed to move cnode cap into cnode")
 }
 
-static int put_bootinfo(seL4_CPtr vspace) {
-    return 0;
+static int put_bootinfo(seL4_CPtr vspace, seL4_Word cnode_size)
+{
+    seL4_CPtr bi_frame = free_slot_start++;
+    int error;
+    create_object(seL4_X86_4K, 0, seL4_CapInitThreadCNode, bi_frame);
+    error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, seL4_ARCH_Default_VMAttributes);
+    if (error = seL4_FailedLookup) {
+        seL4_CPtr sel4_page_pt = free_slot_start++;
+        create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
+        error = seL4_X86_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
+        ZF_LOGF_IF(error, "Failed to map new pt");
+
+        error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, seL4_ARCH_Default_VMAttributes);
+    }
+    ZF_LOGF_IF(error, "Failed to map bi frame");
+
+    seL4_BootInfo* bi;
+    bi = (void*)copy_addr;
+
+    bi->nodeID = bootinfo->nodeID;
+    bi->numNodes = bootinfo->numNodes;
+    bi->numIOPTLevels = bootinfo->numIOPTLevels;
+    bi->initThreadCNodeSizeBits = cnode_size;
+    bi->initThreadDomain = bootinfo->initThreadDomain;
+    bi->extraLen = 0;
+    bi->extraBIPages.start = 0;
+    bi->extraBIPages.end = 0;
+
+    /* bi->ipcBuffer =  */ // TODO: create a ipc buffer for the component, mapped into the child vspace
+
+    const char *name = NULL;
+    unsigned long size;
+    void *ptr = cpio_get_entry(_component_cpio, 0, &name, &size);
+    ZF_LOGF_IF(ptr == NULL, "Failed to get entry");
+    void *elf_file = cpio_get_file(_component_cpio, name, &size);
+    ZF_LOGF_IF(elf_file == NULL, "failed to get the elf");
+
+    seL4_Word min;
+    seL4_Word max;
+    error = elf_getMemoryBounds(elf_file, 0, &min, &max);
+    ZF_LOGD("Min is %lx, Max is %lx", min, max);
+    ZF_LOGF_IF(error != 1, "failed to get memory bounds");
+    seL4_Word ui_end = ROUND_UP(max, PAGE_SIZE_4K);
+    ZF_LOGD("ui_end is %lx", ui_end);
+
+
+    return error;
 }
 
 
@@ -497,34 +541,13 @@ create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
     seL4_CPtr new_cnode = free_slot_start++;
     seL4_Word init_thread_cnode_size = bootinfo->initThreadCNodeSizeBits;
 
-    for (int i = 0; i < 400; ++i) {
-        seL4_CPtr new_frame = free_slot_start++;
-        error = create_object(seL4_X86_4K, 0, root_cnode, new_frame);
-        ZF_LOGF_IF(error, "failed to create new frame, possibily not enough memory");
-
-        seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
-        error = seL4_ARCH_Page_Map(new_frame, new_vspace, (seL4_Word)0x49e000 + i * 0x1000, seL4_ReadWrite, attribs);
-        if (error) {
-            seL4_CPtr sel4_page_pt = free_slot_start++;
-            error = create_object(seL4_X86_PageTableObject, 0, root_cnode, sel4_page_pt);
-
-            ZF_LOGF_IF(error, "Failed to create new pt");
-            error = seL4_X86_PageTable_Map(sel4_page_pt, new_vroot, (seL4_Word)0x49e000 + i * 0x1000, seL4_ARCH_Default_VMAttributes);
-            ZF_LOGF_IF(error, "Failed to map new pt")
-            error = seL4_ARCH_Page_Map(new_frame, new_vspace, (seL4_Word)0x48c000 + i * 0x1000, seL4_ReadWrite, attribs);
-        }
-        ZF_LOGF_IF(error, "Failed to map frame");
-    }
-
     seL4_Word cnode_size = 21;
 
     // create the cnode
-    error = create_object(seL4_CapTableObject, cnode_size, root_cnode, new_cnode);
-    ZF_LOGF_IF(error, "Failed to create child cnode");
+    create_object(seL4_CapTableObject, cnode_size, root_cnode, new_cnode);
 
     // here we should also put all needed capabilities into the new cnode
-    error = create_object(seL4_TCBObject, seL4_TCBBits, root_cnode, new_tcb);
-    ZF_LOGF_IF(error, "Failed to create tcb");
+    create_object(seL4_TCBObject, seL4_TCBBits, root_cnode, new_tcb);
 
     seL4_DebugNameThread(new_tcb, "capdl-app");
 
@@ -546,7 +569,7 @@ create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
     //XXX: here we put the capbilities into the new cnode
     put_cap_into_cnode(minted_new_cnode, new_tcb, new_vspace);
     //XXX: here we put the bootinfo frame into the new tcb
-    put_bootinfo(new_vspace);
+    put_bootinfo(new_vspace, cnode_size);
 
     error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
