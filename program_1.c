@@ -28,6 +28,7 @@ int main(int argc, char *argv[])
     seL4_DebugDumpScheduler();
 
     create_child(seL4_CapInitThreadCNode, seL4_CapInitThreadVSpace, seL4_CapInitThreadTCB);
+
     seL4_DebugDumpScheduler();
 
     printf("Done, suspend init thread\n");
@@ -49,6 +50,8 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
     seL4_CPtr new_tcb = free_slot;
     seL4_CPtr new_cnode = free_slot + 1;
 
+    /* seL4_DebugNameThread(new_tcb, "Hello"); */
+
     // printf("tcb %lu cnode %lu\n", new_tcb, new_cnode);
     // create the cnode
     int error = seL4_Untyped_Retype(untyped_cap_start, seL4_CapTableObject, 10, root_cnode, 0, 0, new_cnode, 1);
@@ -62,7 +65,7 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
     error = seL4_TCB_Configure(new_tcb, 0, new_cnode, 0, root_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
 
-    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 254);
+    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 251);
     ZF_LOGF_IF(error, "Failed to set priority");
 
     seL4_UserContext regs = {0};
