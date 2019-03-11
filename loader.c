@@ -20,6 +20,24 @@
 #include <sel4utils/helpers.h>
 #include <sel4/sel4_arch/mapping.h>
 
+#define MAX_LOADABLE_REGIONS 20
+#define MAX_COMPONENTS 20
+
+typedef struct {
+    seL4_Word start;
+    seL4_Word end;
+    seL4_Word vaddr_start;
+} frame_reg_t;
+
+typedef struct {
+    seL4_CPtr vspace;
+    seL4_CPtr cspace;
+    seL4_CPtr tcb;
+    seL4_Word pc;
+    seL4_Word num_regs;
+    frame_reg_t regs[20];
+} component_t;
+
 extern char _component_cpio[];
 static seL4_CPtr free_slot_start, free_slot_end;
 static seL4_BootInfo *bootinfo;
@@ -27,7 +45,8 @@ static seL4_BootInfo *bootinfo;
 static char copy_addr_with_pt[PAGE_SIZE_4K] __attribute__((aligned(PAGE_SIZE_4K)));
 
 static void init_system(void);
-static void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
+static void spawn_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
+static void setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component);
 
 #define PML4_SLOT(vaddr) ((vaddr >> (seL4_PDPTIndexBits + seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PML4IndexBits))
 #define PDPT_SLOT(vaddr) ((vaddr >> (seL4_PageDirIndexBits + seL4_PageTableIndexBits + seL4_PageBits)) & MASK(seL4_PDPTIndexBits))
@@ -42,6 +61,9 @@ extern char _end[];
 
 static seL4_Word curr_untyped = 0;
 static seL4_Word num_untyped = 0;
+
+static component_t components[MAX_COMPONENTS];
+seL4_Word curr_component = 0;
 
 static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
 {
@@ -104,21 +126,25 @@ sort_untypeds(seL4_BootInfo *bootinfo)
     }
 }
 
-seL4_CPtr new_vroot;
-
-static void load_elf(const char* elf_name)
+static void load_elf(const char* elf_name, component_t *component)
 {
-    new_vroot = free_slot_start++;
     int error;
+
+    seL4_CPtr new_vroot = free_slot_start++;
     create_object(seL4_X64_PML4Object, 0, seL4_CapInitThreadCNode, new_vroot);
     error = seL4_X86_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_vroot);
     ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
+
+    component->vspace = new_vroot;
+
 
     seL4_Word elf_size;
     void *elf_file = cpio_get_file(_component_cpio, elf_name, &elf_size);
     if (!elf_file) {
         ZF_LOGF("Didn't find the elf %s", elf_name);
     }
+
+    component->pc = elf_getEntryPoint(elf_file);
 
     ZF_LOGD("   ELF loading %s (from %p)... \n", elf_name, elf_file);
     for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) {
@@ -149,6 +175,12 @@ static void load_elf(const char* elf_name)
         }
         int end_page_slot = free_slot_start;
         ZF_LOGD("For this section the first page is in slot %u the last page is in slot %u", start_page_slot, end_page_slot);
+
+        int curr_reg = component->num_regs;
+        component->regs[curr_reg].start = start_page_slot;
+        component->regs[curr_reg].end = end_page_slot;
+        component->regs[curr_reg].vaddr_start = dest;
+        component->num_regs++;
 
         uintptr_t vaddr = dest;
         // map the frames into addr
@@ -267,14 +299,14 @@ static void load_elf(const char* elf_name)
             vaddr += len;
         }
     }
-
 }
 
 static void
-load_elfs()
+setup_components()
 {
     ZF_LOGD("Initialising ELFs...\n");
     ZF_LOGD(" Available ELFs:\n");
+
     for (int j = 0; ; j++) {
         const char *name = NULL;
         unsigned long size;
@@ -285,7 +317,12 @@ load_elfs()
         ZF_LOGD("  %d: %s, offset: %p, size: %lu\n", j, name,
                 (void*)((uintptr_t)ptr - (uintptr_t)_component_cpio), size);
 
-        load_elf(name);
+        component_t *component  = &(components[curr_component++]);
+
+        load_elf(name, component);
+        setup_compoennt(seL4_CapInitThreadCNode, seL4_CapInitThreadTCB, component);
+        //XXX: here we put the bootinfo frame into the new tcb
+        put_bootinfo();
     }
 }
 
@@ -293,15 +330,14 @@ int main(int argc, char *argv[])
 {
     platsupport_serial_setup_bootinfo_failsafe();
 
-    printf("archive addr is %p\n", &_component_cpio);
-
     init_system();
     sort_untypeds(bootinfo);
-    load_elfs();
+
 
     seL4_DebugDumpScheduler();
 
-    create_child(seL4_CapInitThreadCNode, new_vroot, seL4_CapInitThreadTCB);
+    setup_components();
+    create_bootinfos();
 
     seL4_DebugDumpScheduler();
 
@@ -483,7 +519,7 @@ static int put_cap_into_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
     ZF_LOGF_IF(error, "Failed to move cnode cap into cnode")
 }
 
-static int put_bootinfo(seL4_CPtr vspace, seL4_Word cnode_size)
+static int put_bootinfo(component_t* component)
 {
     seL4_CPtr bi_frame = free_slot_start++;
     int error;
@@ -534,7 +570,7 @@ static int put_bootinfo(seL4_CPtr vspace, seL4_Word cnode_size)
 
 
 static void
-create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
+spawn_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
 {
     int error;
     seL4_CPtr new_tcb = free_slot_start++;
@@ -566,6 +602,7 @@ create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
             );
     ZF_LOGF_IF(error, "Failed to mint the new cnode cap");
 
+
     //XXX: here we put the capbilities into the new cnode
     put_cap_into_cnode(minted_new_cnode, new_tcb, new_vspace);
     //XXX: here we put the bootinfo frame into the new tcb
@@ -590,4 +627,67 @@ create_child(seL4_CPtr root_cnode, seL4_CPtr new_vspace, seL4_CPtr root_tcb)
 
     error = seL4_TCB_Resume(new_tcb);
     ZF_LOGF_IF(error, "Failed to resume tcb");
+}
+
+static void
+setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component)
+{
+    int error;
+    seL4_CPtr new_tcb = free_slot_start++;
+    seL4_CPtr new_cnode = free_slot_start++;
+    seL4_CPtr new_vspace = component->vspace;
+
+
+    seL4_Word init_thread_cnode_size = bootinfo->initThreadCNodeSizeBits;
+
+    seL4_Word cnode_size = 21;
+
+    // create the cnode
+    create_object(seL4_CapTableObject, cnode_size, root_cnode, new_cnode);
+
+    // here we should also put all needed capabilities into the new cnode
+    create_object(seL4_TCBObject, seL4_TCBBits, root_cnode, new_tcb);
+
+    seL4_DebugNameThread(new_tcb, "capdl-app");
+
+    seL4_CPtr minted_new_cnode = free_slot_start++;
+    error = seL4_CNode_Mint(
+                seL4_CapInitThreadCNode,
+                minted_new_cnode,
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode,
+                new_cnode,
+                CONFIG_WORD_SIZE,
+                seL4_AllRights,
+                seL4_CNode_CapData_new(0, 64 - cnode_size).words[0]
+            );
+    ZF_LOGF_IF(error, "Failed to mint the new cnode cap");
+
+    component->cspace = minted_new_cnode;
+    component->vspace = new_vspace;
+    component->tcb = new_tcb;
+    component->num_regs = 0;
+
+    //XXX: here we put the capbilities into the new cnode
+    put_cap_into_cnode(minted_new_cnode, new_tcb, new_vspace);
+
+
+    error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
+    ZF_LOGF_IF(error, "Failed to configure tcb");
+
+    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 254);
+    ZF_LOGF_IF(error, "Failed to set priority");
+
+    seL4_UserContext regs = {0};
+    error = seL4_TCB_ReadRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
+    ZF_LOGF_IF(error, "Failed to read registers");
+
+    // here we set the ip to _sel4_start since we set the entry point to _sel4_start, since it
+    // will set the stack pointer, we don't need to pass in a stack pointer in here
+    sel4utils_arch_init_local_context((void*)component->pc, 0, 0, 0, 0, &regs);
+
+    error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
+    ZF_LOGF_IF(error, "Failed to write registers");
+
+    seL4_TCB_Resume(new_tcb);
 }
