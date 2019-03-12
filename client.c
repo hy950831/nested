@@ -9,7 +9,7 @@
 /* constants */
 // cslot containing the endpoint for the server
 extern seL4_CPtr endpoint;
-#define MSG_DATA 0x2 //  arbitrary data to send
+#define MSG_DATA 0x3 //  arbitrary data to send
 
 int main(int argc, char **argv) {
     seL4_MessageInfo_t tag;

@@ -23,7 +23,7 @@ extern seL4_CPtr frame;
 extern const char timer_vaddr[4096];
 // irq control capability
 extern seL4_CPtr irq_control;
-// empty slot for the irq 
+// empty slot for the irq
 extern seL4_CPtr irq_handler;
 
 /* constants */
@@ -54,36 +54,36 @@ int main(void) {
 
     /* map the device frame into the address space */
     error = seL4_ARM_Page_Map(timer_frame, vspace, (seL4_Word) timer_vaddr, seL4_AllRights, 0);
-    ZF_LOGF_IF(error, "Failed to map device frame");    
+    ZF_LOGF_IF(error, "Failed to map device frame");
     ttc_t ttc;
     ttc_config_t ttc_config = {
         .vaddr =  (void *) timer_vaddr,
         .id = TTC0_TIMER1
-    }; 
+    };
 
-     
+
     /* put the interrupt handle for TTC0_TIMER1_IRQ in the irq_handler cslot */
     error = seL4_IRQControl_Get(irq_control, TTC0_TIMER1_IRQ, cnode, irq_handler, seL4_WordBits);
     ZF_LOGF_IF(error, "Failed to get irq capability");
-     
-    /* set ntfn as the notification for irq_handler */ 
+
+    /* set ntfn as the notification for irq_handler */
     error =  seL4_IRQHandler_SetNotification(irq_handler, ntfn);
     ZF_LOGF_IF(error, "Failed to set notification");
-    
+
     /* set up the timer driver */
     int timer_err = ttc_init(&ttc, ttc_config);
     ZF_LOGF_IF(timer_err, "Failed to init timer");
 
     timer_err = ttc_start(&ttc);
     ZF_LOGF_IF(timer_err, "Failed to start timer");
-   
+
     /* ack the irq in case of any pending interrupts int the driver */
     error = seL4_IRQHandler_Ack(irq_handler);
     ZF_LOGF_IF(error, "Failed to ack irq");
-    
+
     timer_err = ttc_set_timeout(&ttc, NS_IN_MS, true);
     ZF_LOGF_IF(timer_err, "Failed to set timeout");
-    
+
     int count = 0;
     while (1) {
         /* Handle the timer interrupt */
@@ -93,8 +93,8 @@ int main(void) {
         if (count == 0) {
             printf("Tick\n");
         }
-         
-        /* ack the interrupt */ 
+
+        /* ack the interrupt */
         error = seL4_IRQHandler_Ack(irq_handler);
         ZF_LOGF_IF(error, "Failed to ack irq");
 

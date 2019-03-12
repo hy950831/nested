@@ -545,10 +545,9 @@ int main(int argc, char *argv[])
     seL4_DebugDumpScheduler();
 
     setup_components();
+
     resume_components();
-
     seL4_DebugDumpScheduler();
-
     printf("Done, suspend init thread\n");
     seL4_TCB_Suspend(seL4_CapInitThreadTCB);
 
@@ -817,9 +816,9 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
 
-    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 254);
+    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 255);
     ZF_LOGF_IF(error, "Failed to set priority");
-    error = seL4_TCB_SetMCPriority(new_tcb, root_tcb, 254);
+    error = seL4_TCB_SetMCPriority(new_tcb, root_tcb, 255);
     ZF_LOGF_IF(error, "Failed to set priority");
 
     seL4_UserContext regs = {0};
