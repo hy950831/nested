@@ -15,46 +15,53 @@ set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -u __vsyscall_ptr")
 include(helpers.cmake)
 
 
-cdl_pp(${CMAKE_CURRENT_SOURCE_DIR}/manifest.py cdl_pp_target
-    ELF "program_1"
-    CFILE "${CMAKE_CURRENT_BINARY_DIR}/cspace_program_1.c"
+cdl_pp(${CMAKE_CURRENT_SOURCE_DIR}/.manifest.obj cdl_pp_target
+    ELF "client"
+    CFILE "${CMAKE_CURRENT_BINARY_DIR}/cspace_client.c"
+
+    ELF "timer"
+    CFILE "${CMAKE_CURRENT_BINARY_DIR}/cspace_timer.c"
 )
 
-add_executable(program_1 EXCLUDE_FROM_ALL program_1.c cspace_program_1.c)
-add_dependencies(program_1 cdl_pp_target)
-target_link_libraries(program_1 sel4tutorials)
+add_executable(client EXCLUDE_FROM_ALL client.c cspace_client.c)
+add_dependencies(client cdl_pp_target)
+target_link_libraries(client sel4tutorials)
 
-list(APPEND elf_files "$<TARGET_FILE:program_1>")
-list(APPEND elf_targets "program_1")
+list(APPEND elf_files "$<TARGET_FILE:client>")
+list(APPEND elf_targets "client")
+
+add_executable(timer EXCLUDE_FROM_ALL timer.c cspace_timer.c)
+add_dependencies(timer cdl_pp_target)
+target_link_libraries(timer sel4tutorials)
+
+list(APPEND elf_files "$<TARGET_FILE:timer>")
+list(APPEND elf_targets "timer")
 
 cdl_ld("${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" capdl_spec
-    MANIFESTS ${CMAKE_CURRENT_SOURCE_DIR}/manifest.py
+    MANIFESTS ${CMAKE_CURRENT_SOURCE_DIR}/.manifest.obj
     ELF ${elf_files}
     DEPENDS ${elf_targets})
 
-add_executable(loader EXCLUDE_FROM_ALL loader.c)
-target_link_libraries(loader sel4tutorials)
-
-CapDLToolCFileGen(program_1_cspec program_1_cspec.c "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl"
-    "${CAPDL_TOOL_BINARY}"
+CapDLToolCFileGen(${capdl_spec}_cspec ${capdl_spec}_cspec.c "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" "${CAPDL_TOOL_BINARY}"
     MAX_IRQS ${CapDLLoaderMaxIRQs}
-    DEPENDS ${program_1} install_capdl_tool "${CAPDL_TOOL_BINARY}"
-    )
+    DEPENDS ${capdl_spec} install_capdl_tool "${CAPDL_TOOL_BINARY}")
 
 BuildCapDLApplication(
-        C_SPEC "program_1_cspec.c"
+        C_SPEC "${capdl_spec}_cspec.c"
         ELF ${elf_files}
-        DEPENDS ${elf_targets} program_1_cspec
+        DEPENDS ${elf_targets} ${capdl_spec}_cspec
         OUTPUT "capdl-app"
     )
 
 SetSeL4StartComponent(capdl-app)
-
 list(APPEND cpio_files "$<TARGET_FILE:capdl-app>")
+
+add_executable(loader EXCLUDE_FROM_ALL loader.c)
+target_link_libraries(loader sel4tutorials)
+
 MakeCPIO(archive_final.o ${cpio_files}
     CPIO_SYMBOL _component_cpio
 )
-
 
 add_executable(loader_final EXCLUDE_FROM_ALL
     loader.c
