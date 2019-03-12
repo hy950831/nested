@@ -112,7 +112,7 @@ sort_untypeds(seL4_BootInfo *bootinfo)
     // Store untypeds in untyped_cptrs array.
     for (seL4_Word untyped_index = 0; untyped_index != untyped_end - untyped_start; untyped_index++) {
         if (bootinfo->untypedList[untyped_index].isDevice) {
-            if(devices.start == 0) {
+            if (devices.start == 0) {
                 devices.start = untyped_index;
                 devices.end = untyped_index;
             } else {
@@ -378,14 +378,14 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
     for (int i = devices.start; i < devices.end; i++) {
         ZF_LOGD(">");
         error = seL4_CNode_Copy(
-                component->cspace,
-                component->free_slot_start++,
-                CONFIG_WORD_SIZE,
+                    component->cspace,
+                    component->free_slot_start++,
+                    CONFIG_WORD_SIZE,
 
-                seL4_CapInitThreadCNode,
-                bootinfo->untyped.start + i,
-                CONFIG_WORD_SIZE,
-                seL4_AllRights
+                    seL4_CapInitThreadCNode,
+                    bootinfo->untyped.start + i,
+                    CONFIG_WORD_SIZE,
+                    seL4_AllRights
                 );
 
         ZF_LOGD("device %u paddr is %lx", i, bootinfo->untypedList[i].paddr);
@@ -405,7 +405,7 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
     bi->empty.end = 25000;
 }
 
-static int put_bootinfo(component_t* component)
+static int setup_component_bootinfo(component_t* component)
 {
     seL4_CPtr bi_frame = free_slot_start++;
     seL4_CPtr sel4_page_pt = 0;
@@ -523,7 +523,7 @@ setup_components()
         setup_compoennt(seL4_CapInitThreadCNode, seL4_CapInitThreadTCB, component);
 
         //XXX: here we put the bootinfo frame into the new tcb
-        put_bootinfo(component);
+        setup_component_bootinfo(component);
     }
 }
 
@@ -533,6 +533,8 @@ static void resume_components()
         seL4_TCB_Resume(components[i].tcb);
     }
 }
+
+seL4_CPtr new_ep;
 
 int main(int argc, char *argv[])
 {
@@ -548,8 +550,49 @@ int main(int argc, char *argv[])
 
     resume_components();
     seL4_DebugDumpScheduler();
-    printf("Done, suspend init thread\n");
-    seL4_TCB_Suspend(seL4_CapInitThreadTCB);
+    printf("Done, start handling irqs\n");
+
+    // handling irq syscalls
+    while (1) {
+        seL4_Word result;
+        seL4_CPtr new_cap = free_slot_start++;
+        seL4_CPtr caller = free_slot_start++;
+        seL4_SetCapReceivePath(seL4_CapInitThreadCNode, new_cap, seL4_WordBits);
+        seL4_MessageInfo_t tag = seL4_Recv(new_ep, NULL);
+        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, caller, CONFIG_WORD_SIZE);
+        seL4_Word invLabel = seL4_MessageInfo_get_label(tag);
+
+        switch (invLabel) {
+        case IRQIssueIRQHandler: {
+            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
+            seL4_Word mr0 = seL4_GetMR(0);
+            seL4_Word mr1 = seL4_GetMR(1);
+            seL4_Word mr2 = seL4_GetMR(2);
+            result = seL4_IRQControl_Get(seL4_CapIRQControl, mr0, new_cap, mr1, mr2);
+            ZF_LOGF_IF(result, "Failed");
+            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+        case IRQSetIRQHandler: {
+            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
+            result = seL4_IRQHandler_SetNotification(seL4_CapIRQControl, new_cap);
+            ZF_LOGF_IF(result, "Failed");
+            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+        case IRQAckIRQ: {
+            result = seL4_IRQHandler_Ack(seL4_CapIRQControl);
+            ZF_LOGF_IF(result, "Failed");
+            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
+            break;
+        }
+        }
+
+
+    }
+    ZF_LOGF("nickyoung???");
+
+    /* seL4_TCB_Suspend(seL4_CapInitThreadTCB); */
 
     return 0;
 }
@@ -689,7 +732,7 @@ static void init_system(void)
     init_copy_frame();
 }
 
-static int put_cap_into_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
+static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
 {
     int error =  0;
 
@@ -706,16 +749,19 @@ static int put_cap_into_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot)
             );
     ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
 
-    error = seL4_CNode_Move(
+
+    new_ep = free_slot_start++;
+    create_object(seL4_EndpointObject, 0, seL4_CapInitThreadCNode, new_ep);
+
+    error = seL4_CNode_Copy(
                 cnode,
                 seL4_CapIRQControl,
                 CONFIG_WORD_SIZE,
 
                 seL4_CapInitThreadCNode,
-                seL4_CapIRQControl,
-                CONFIG_WORD_SIZE
-                /* seL4_AllRights */
-
+                new_ep,
+                CONFIG_WORD_SIZE,
+                seL4_AllRights
             );
     ZF_LOGF_IF(error, "Failed to move irqcontrol cap into cnode");
 
@@ -810,7 +856,7 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     component->tcb = new_tcb;
 
     //XXX: here we put the capbilities into the new cnode
-    put_cap_into_cnode(minted_new_cnode, new_tcb, new_vspace);
+    setup_component_cnode(minted_new_cnode, new_tcb, new_vspace);
 
 
     error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
@@ -831,5 +877,4 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
 
     error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to write registers");
-
 }
