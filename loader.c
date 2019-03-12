@@ -786,7 +786,7 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     // here we should also put all needed capabilities into the new cnode
     create_object(seL4_TCBObject, seL4_TCBBits, root_cnode, new_tcb);
 
-    seL4_DebugNameThread(new_tcb, "capdl-app");
+    seL4_DebugNameThread(new_tcb, "capdl-loader");
 
     seL4_CPtr minted_new_cnode = free_slot_start++;
     error = seL4_CNode_Mint(
