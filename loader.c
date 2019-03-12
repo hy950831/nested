@@ -347,7 +347,6 @@ static void move_ui_frames_cap(seL4_BootInfo* bi, component_t* component)
 
     bi->userImageFrames.start = start;
     bi->userImageFrames.end = end;
-
 }
 
 static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
@@ -375,6 +374,7 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
         bi->untypedList[i].sizeBits = 24;
     }
 
+    // put device untypeds into child components
     for (int i = devices.start; i < devices.end; i++) {
         ZF_LOGD(">");
         error = seL4_CNode_Copy(
