@@ -625,7 +625,8 @@ setup_component(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     setup_component_cnode(minted_new_cnode, new_tcb, new_vspace);
 }
 
-static void setup_component_tcb(component_t *component) {
+static void setup_component_tcb(component_t *component)
+{
     seL4_CPtr tcb = component->tcb;
     seL4_CPtr cspace = component->cspace;
     seL4_CPtr vspace = component->vspace;
