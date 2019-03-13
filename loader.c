@@ -728,8 +728,6 @@ static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot
             );
     ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
 
-    syscall_ep = free_slot_start++;
-    create_object(seL4_EndpointObject, 0, seL4_CapInitThreadCNode, syscall_ep);
     error = seL4_CNode_Copy(
                 cnode,
                 seL4_CapIRQControl,
@@ -852,6 +850,9 @@ int main(int argc, char *argv[])
 
 
     seL4_DebugDumpScheduler();
+
+    syscall_ep = free_slot_start++;
+    create_object(seL4_EndpointObject, 0, seL4_CapInitThreadCNode, syscall_ep);
 
     setup_components();
 
