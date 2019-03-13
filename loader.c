@@ -39,6 +39,7 @@ typedef struct {
     frame_reg_t regs[20];
 } component_t;
 
+static seL4_CPtr syscall_ep;
 static frame_reg_t devices;
 
 extern char _component_cpio[];
@@ -213,14 +214,14 @@ static void load_elf(const char* elf_name, component_t *component)
 
             seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
 
-            int error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, attribs);
+            int error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, attribs);
 
             if (error == seL4_FailedLookup) {
                 sel4_page_pt = free_slot_start++;
                 create_object(seL4_ARCH_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
                 ZF_LOGF_IF(error, "Failed to map new pt");
-                error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, attribs);
+                error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, attribs);
             }
 
             if (error) {
@@ -280,7 +281,7 @@ static void load_elf(const char* elf_name, component_t *component)
 
             seL4_ARCH_VMAttributes attribs = seL4_ARCH_Default_VMAttributes;
 
-            error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_ReadWrite, attribs);
+            error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_AllRights, attribs);
             if (error == seL4_FailedLookup) {
                 seL4_Word sel4_page_pt = free_slot_start++;
                 create_object(seL4_ARCH_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
@@ -309,11 +310,7 @@ static void load_elf(const char* elf_name, component_t *component)
                     ZF_LOGF_IF(error, "Failed to map pt");
 #endif
                 }
-                ZF_LOGF_IF(error, "Failed to map new pt %u", error);
-
-                ZF_LOGF_IFERR(error, "");
-
-                error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_ReadWrite, attribs);
+                error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_AllRights, attribs);
                 ZF_LOGF_IF(error, "Failed to map page into new vroot %u", error);
             }
 
@@ -330,15 +327,13 @@ static void move_ui_frames_cap(seL4_BootInfo* bi, component_t* component)
         ZF_LOGD("For this section start is %u, end is %u", component->regs[i].start, component->regs[i].end);
 
         for (int j = component->regs[i].start; j < component->regs[i].end; ++j) {
-            int error = seL4_CNode_Copy(component->cspace,
+            int error = seL4_CNode_Move(component->cspace,
                                         component->free_slot_start++,
                                         CONFIG_WORD_SIZE,
 
                                         seL4_CapInitThreadCNode,
                                         j,
-                                        CONFIG_WORD_SIZE,
-
-                                        seL4_AllRights
+                                        CONFIG_WORD_SIZE
                                        );
             ZF_LOGF_IF(error, "Failed to move ui frame caps into bi");
         }
@@ -347,6 +342,7 @@ static void move_ui_frames_cap(seL4_BootInfo* bi, component_t* component)
 
     bi->userImageFrames.start = start;
     bi->userImageFrames.end = end;
+    ZF_LOGD("For this ui start is %u, end is %u", start, end);
 }
 
 static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
@@ -411,14 +407,14 @@ static int setup_component_bootinfo(component_t* component)
     seL4_CPtr sel4_page_pt = 0;
     int error;
     create_object(seL4_ARCH_4KPage, 0, seL4_CapInitThreadCNode, bi_frame);
-    error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, seL4_ARCH_Default_VMAttributes);
+    error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
     if (error = seL4_FailedLookup) {
         sel4_page_pt = free_slot_start++;
         create_object(seL4_ARCH_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
         error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
         ZF_LOGF_IF(error, "Failed to map new pt");
 
-        error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ReadWrite, seL4_ARCH_Default_VMAttributes);
+        error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
     }
     ZF_LOGF_IF(error, "Failed to map bi frame");
 
@@ -453,12 +449,12 @@ static int setup_component_bootinfo(component_t* component)
 
     seL4_Word ui_end = ROUND_UP(max, PAGE_SIZE_4K);
     ZF_LOGD("ui_end is %lx", ui_end);
+    bi->ipcBuffer = (void*)ui_end;
 
     seL4_ARCH_Page_Unmap(bi_frame);
     if (sel4_page_pt) {
         seL4_ARCH_PageTable_Unmap(sel4_page_pt);
     }
-
 
     seL4_CPtr ipc_frame = free_slot_start++;
     create_object(seL4_ARCH_4KPage, 0, seL4_CapInitThreadCNode, ipc_frame);
@@ -495,7 +491,6 @@ static int setup_component_bootinfo(component_t* component)
             );
     ZF_LOGF_IF(error, "Failed to move ipcbuffer cap in");
 
-
     return error;
 }
 
@@ -524,6 +519,8 @@ setup_components()
 
         //XXX: here we put the bootinfo frame into the new tcb
         setup_component_bootinfo(component);
+
+        /* move_caps(component); */
     }
 }
 
@@ -534,73 +531,6 @@ static void resume_components()
     }
 }
 
-seL4_CPtr new_ep;
-
-int main(int argc, char *argv[])
-{
-    platsupport_serial_setup_bootinfo_failsafe();
-
-    init_system();
-    sort_untypeds(bootinfo);
-
-
-    seL4_DebugDumpScheduler();
-
-    setup_components();
-
-    resume_components();
-    seL4_DebugDumpScheduler();
-    printf("Done, start handling irqs\n");
-
-    // handling irq syscalls
-    seL4_CPtr new_cap = free_slot_start++;
-    seL4_CPtr caller = free_slot_start++;
-
-    while (1) {
-        seL4_Word result;
-        seL4_SetCapReceivePath(seL4_CapInitThreadCNode, new_cap, seL4_WordBits);
-        seL4_MessageInfo_t tag = seL4_Recv(new_ep, NULL);
-        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, caller, CONFIG_WORD_SIZE);
-        seL4_Word invLabel = seL4_MessageInfo_get_label(tag);
-
-        switch (invLabel) {
-        case IRQIssueIRQHandler: {
-            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
-            seL4_Word mr0 = seL4_GetMR(0);
-            seL4_Word mr1 = seL4_GetMR(1);
-            seL4_Word mr2 = seL4_GetMR(2);
-            result = seL4_IRQControl_Get(seL4_CapIRQControl, mr0, new_cap, mr1, mr2);
-            if (result) {
-                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
-            }
-            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
-            break;
-        }
-        case IRQSetIRQHandler: {
-            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
-            result = seL4_IRQHandler_SetNotification(seL4_CapIRQControl, new_cap);
-            if (result) {
-                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
-            }
-            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
-            break;
-        }
-        case IRQAckIRQ: {
-            result = seL4_IRQHandler_Ack(seL4_CapIRQControl);
-            if (result) {
-                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
-            }
-            seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
-            break;
-        }
-        }
-
-
-    }
-    ZF_LOGF("nickyoung???");
-
-    return 0;
-}
 
 void init_copy_frame()
 {
@@ -754,17 +684,28 @@ static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot
             );
     ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
 
+    error = seL4_CNode_Copy(
+                cnode,
+                seL4_CapInitThreadVSpace,
+                CONFIG_WORD_SIZE,
 
-    new_ep = free_slot_start++;
-    create_object(seL4_EndpointObject, 0, seL4_CapInitThreadCNode, new_ep);
+                seL4_CapInitThreadCNode,
+                vroot,
+                CONFIG_WORD_SIZE,
 
+                seL4_AllRights
+            );
+    ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
+
+    syscall_ep = free_slot_start++;
+    create_object(seL4_EndpointObject, 0, seL4_CapInitThreadCNode, syscall_ep);
     error = seL4_CNode_Copy(
                 cnode,
                 seL4_CapIRQControl,
                 CONFIG_WORD_SIZE,
 
                 seL4_CapInitThreadCNode,
-                new_ep,
+                syscall_ep,
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
@@ -792,16 +733,6 @@ static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot
             );
     ZF_LOGF_IF(error, "Failed to move cnode cap into cnode");
 
-    error = seL4_CNode_Copy(
-                cnode, // to cnode
-                seL4_CapInitThreadVSpace, // to slot
-                CONFIG_WORD_SIZE,
-                seL4_CapInitThreadCNode, // from cnode
-                vroot, // from slot
-                CONFIG_WORD_SIZE,
-                seL4_AllRights
-            );
-    ZF_LOGF_IF(error, "Failed to move cnode cap into cnode");
 
     error = seL4_CNode_Copy(
                 cnode, // to cnode
@@ -857,11 +788,11 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     component->tcb = new_tcb;
 
     //XXX: here we put the capbilities into the new cnode
-    setup_component_cnode(minted_new_cnode, new_tcb, new_vspace);
-
 
     error = seL4_TCB_Configure(new_tcb, 0, minted_new_cnode, 0, new_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
+
+    setup_component_cnode(minted_new_cnode, new_tcb, new_vspace);
 
     error = seL4_TCB_SetPriority(new_tcb, root_tcb, 255);
     ZF_LOGF_IF(error, "Failed to set priority");
@@ -878,4 +809,60 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
 
     error = seL4_TCB_WriteRegisters(new_tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
     ZF_LOGF_IF(error, "Failed to write registers");
+}
+
+int main(int argc, char *argv[])
+{
+    platsupport_serial_setup_bootinfo_failsafe();
+
+    init_system();
+    sort_untypeds(bootinfo);
+
+
+    seL4_DebugDumpScheduler();
+
+    setup_components();
+
+    resume_components();
+    seL4_DebugDumpScheduler();
+    printf("Done, start handling irqs\n");
+
+    // handling irq syscalls
+    seL4_CPtr new_cap = free_slot_start++;
+    seL4_CPtr caller = free_slot_start++;
+    while (1) {
+        seL4_Word result;
+        seL4_SetCapReceivePath(seL4_CapInitThreadCNode, new_cap, seL4_WordBits);
+        seL4_MessageInfo_t tag = seL4_Recv(syscall_ep, NULL);
+        seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, caller, CONFIG_WORD_SIZE);
+        seL4_Word invLabel = seL4_MessageInfo_get_label(tag);
+
+        switch (invLabel) {
+        case IRQIssueIRQHandler: {
+            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
+            seL4_Word mr0 = seL4_GetMR(0);
+            seL4_Word mr1 = seL4_GetMR(1);
+            seL4_Word mr2 = seL4_GetMR(2);
+            result = seL4_IRQControl_Get(seL4_CapIRQControl, mr0, new_cap, mr1, mr2);
+            seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            break;
+        }
+        case IRQSetIRQHandler: {
+            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
+            result = seL4_IRQHandler_SetNotification(seL4_CapIRQControl, new_cap);
+            seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            break;
+        }
+        case IRQAckIRQ: {
+            result = seL4_IRQHandler_Ack(seL4_CapIRQControl);
+            seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            break;
+        }
+        default:
+            ZF_LOGF("don't play");
+        }
+
+
+    }
+    return 0;
 }
