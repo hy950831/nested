@@ -553,10 +553,11 @@ int main(int argc, char *argv[])
     printf("Done, start handling irqs\n");
 
     // handling irq syscalls
+    seL4_CPtr new_cap = free_slot_start++;
+    seL4_CPtr caller = free_slot_start++;
+
     while (1) {
         seL4_Word result;
-        seL4_CPtr new_cap = free_slot_start++;
-        seL4_CPtr caller = free_slot_start++;
         seL4_SetCapReceivePath(seL4_CapInitThreadCNode, new_cap, seL4_WordBits);
         seL4_MessageInfo_t tag = seL4_Recv(new_ep, NULL);
         seL4_CNode_SaveCaller(seL4_CapInitThreadCNode, caller, CONFIG_WORD_SIZE);
@@ -569,20 +570,26 @@ int main(int argc, char *argv[])
             seL4_Word mr1 = seL4_GetMR(1);
             seL4_Word mr2 = seL4_GetMR(2);
             result = seL4_IRQControl_Get(seL4_CapIRQControl, mr0, new_cap, mr1, mr2);
-            ZF_LOGF_IF(result, "Failed");
+            if (result) {
+                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            }
             seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
         case IRQSetIRQHandler: {
             assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
             result = seL4_IRQHandler_SetNotification(seL4_CapIRQControl, new_cap);
-            ZF_LOGF_IF(result, "Failed");
+            if (result) {
+                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            }
             seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
         case IRQAckIRQ: {
             result = seL4_IRQHandler_Ack(seL4_CapIRQControl);
-            ZF_LOGF_IF(result, "Failed");
+            if (result) {
+                seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
+            }
             seL4_Send(caller, seL4_MessageInfo_new(0, 0, 0, 0));
             break;
         }
@@ -591,8 +598,6 @@ int main(int argc, char *argv[])
 
     }
     ZF_LOGF("nickyoung???");
-
-    /* seL4_TCB_Suspend(seL4_CapInitThreadTCB); */
 
     return 0;
 }
@@ -842,13 +847,9 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
                 new_cnode,
                 CONFIG_WORD_SIZE,
                 seL4_AllRights,
-
-#if defined(CONFIG_ARCH_X86_64)
-                seL4_CNode_CapData_new(0, 64 - cnode_size).words[0]
-#else
-                seL4_CNode_CapData_new(0, 32 - cnode_size).words[0]
-#endif
+                seL4_CNode_CapData_new(0, CONFIG_WORD_SIZE - cnode_size).words[0]
             );
+
     ZF_LOGF_IF(error, "Failed to mint the new cnode cap");
 
     component->cspace = minted_new_cnode;
