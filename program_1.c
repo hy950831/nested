@@ -76,6 +76,8 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
 
 void sayhello()
 {
+    printf("This is the sayhello program from another capdl loader and then i will say: \n");
     printf("hello\n");
-    while (1);
+    printf("After me saying hello, the timer client from another capdl loader should resume after 3 second sleep\n");
+    while(1);
 }

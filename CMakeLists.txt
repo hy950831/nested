@@ -42,18 +42,18 @@ cdl_ld("${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" capdl_spec
     ELF ${elf_files1}
     DEPENDS ${elf_targets1})
 
-CapDLToolCFileGen(${capdl_spec}_cspec ${capdl_spec}_cspec.c "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" "${CAPDL_TOOL_BINARY}"
+CapDLToolCFileGen("${capdl_spec}_cspec" "${capdl_spec}_cspec.c" "${CMAKE_CURRENT_BINARY_DIR}/spec.cdl" "${CAPDL_TOOL_BINARY}"
     MAX_IRQS ${CapDLLoaderMaxIRQs}
     DEPENDS ${capdl_spec} install_capdl_tool "${CAPDL_TOOL_BINARY}")
 
 BuildCapDLApplication(
         C_SPEC "${capdl_spec}_cspec.c"
         ELF ${elf_files1}
-        DEPENDS ${elf_targets1} ${capdl_spec}_cspec
+        DEPENDS ${elf_targets1} "${capdl_spec}_cspec"
         OUTPUT "capdl-app1"
     )
 
-SetSeL4StartComponent(capdl-app1)
+SetSeL4Start(capdl-app1)
 list(APPEND cpio_files "$<TARGET_FILE:capdl-app1>")
 
 # second capdl loader app
@@ -74,7 +74,7 @@ cdl_ld("${CMAKE_CURRENT_BINARY_DIR}/spec2.cdl" capdl_spec2
     ELF ${elf_files2}
     DEPENDS ${elf_targets2})
 
-CapDLToolCFileGen(${capdl_spec2}_cspec2 ${capdl_spec2}_cspec2.c "${CMAKE_CURRENT_BINARY_DIR}/spec2.cdl"
+CapDLToolCFileGen("${capdl_spec2}_cspec2" "${capdl_spec2}_cspec2.c" "${CMAKE_CURRENT_BINARY_DIR}/spec2.cdl"
     "${CAPDL_TOOL_BINARY}"
     MAX_IRQS ${CapDLLoaderMaxIRQs}
     DEPENDS program_1 install_capdl_tool "${CAPDL_TOOL_BINARY}"
@@ -83,13 +83,12 @@ CapDLToolCFileGen(${capdl_spec2}_cspec2 ${capdl_spec2}_cspec2.c "${CMAKE_CURRENT
 BuildCapDLApplication(
         C_SPEC "${capdl_spec2}_cspec2.c"
         ELF ${elf_files2}
-        DEPENDS ${elf_targets2} ${capdl_spec2}_cspec2
+        DEPENDS ${elf_targets2} "${capdl_spec2}_cspec2"
         OUTPUT "capdl-app2"
     )
-SetSeL4StartComponent(capdl-app2)
+SetSeL4Start(capdl-app2)
 
 list(APPEND cpio_files "$<TARGET_FILE:capdl-app2>")
-
 
 # the combined loader
 
