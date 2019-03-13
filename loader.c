@@ -37,7 +37,9 @@ typedef struct {
     seL4_CPtr cspace;
     seL4_CPtr tcb;
     seL4_Word pc;
+    seL4_Word which_elf;
     seL4_Word free_slot_start;
+    seL4_Word need_devices;
     seL4_Word num_regs;
     frame_reg_t regs[20];
 } component_t;
@@ -77,6 +79,7 @@ seL4_Word curr_component = 0;
 
 static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
 {
+    static int used_up_count = 0;
     int error;
     do {
         error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], type, size, root, 0, 0, slot, 1);
@@ -86,7 +89,12 @@ static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_W
     } while (error && curr_untyped < num_untyped);
 
     if (error) {
-        ZF_LOGF("out of untyped memory");
+        if (used_up_count = 0) {
+            curr_untyped = 0;
+            used_up_count += 1;
+        } else {
+            ZF_LOGF("out of untyped memory");
+        }
     }
 }
 
@@ -366,7 +374,7 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
     for (int i = 0; i < 14; ++i) {
         ZF_LOGD(".");
         seL4_CPtr new_untyped = free_slot_start++;
-        create_object(seL4_UntypedObject, 24, seL4_CapInitThreadCNode, new_untyped);
+        create_object(seL4_UntypedObject, 22, seL4_CapInitThreadCNode, new_untyped);
 
         error = seL4_CNode_Move(
                     component->cspace,
@@ -383,27 +391,29 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
     }
 
     // put device untypeds into child components
-    for (int i = devices.start; i < devices.end; i++) {
-        ZF_LOGD(">");
-        error = seL4_CNode_Copy(
-                    component->cspace,
-                    component->free_slot_start++,
-                    CONFIG_WORD_SIZE,
+    if (component->need_devices) {
+        for (int i = devices.start; i < devices.end; i++) {
+            ZF_LOGD(">");
+            error = seL4_CNode_Copy(
+                        component->cspace,
+                        component->free_slot_start++,
+                        CONFIG_WORD_SIZE,
 
-                    seL4_CapInitThreadCNode,
-                    bootinfo->untyped.start + i,
-                    CONFIG_WORD_SIZE,
-                    seL4_AllRights
-                );
+                        seL4_CapInitThreadCNode,
+                        bootinfo->untyped.start + i,
+                        CONFIG_WORD_SIZE,
+                        seL4_AllRights
+                    );
 
-        ZF_LOGD("device %u paddr is %lx", i, bootinfo->untypedList[i].paddr);
-        ZF_LOGD("put into slot %u", component->free_slot_start - 1);
-        ZF_LOGF_IF(error, "Failed to copy device untyped");
+            ZF_LOGD("device %u paddr is %lx", i, bootinfo->untypedList[i].paddr);
+            ZF_LOGD("put into slot %u", component->free_slot_start - 1);
+            ZF_LOGF_IFERR(error, "Failed to copy device untyped");
 
-        int count = 14 + i - devices.start;
-        bi->untypedList[count].paddr = bootinfo->untypedList[i].paddr;
-        bi->untypedList[count].sizeBits = bootinfo->untypedList[i].sizeBits;
-        bi->untypedList[count].isDevice = bootinfo->untypedList[i].isDevice;
+            int count = 14 + i - devices.start;
+            bi->untypedList[count].paddr = bootinfo->untypedList[i].paddr;
+            bi->untypedList[count].sizeBits = bootinfo->untypedList[i].sizeBits;
+            bi->untypedList[count].isDevice = bootinfo->untypedList[i].isDevice;
+        }
     }
 
     bi->untyped.start = start;
@@ -448,7 +458,7 @@ static int setup_component_bootinfo(component_t* component)
 
     const char *name = NULL;
     unsigned long size;
-    void *ptr = cpio_get_entry(_component_cpio, cpio_size, 0, &name, &size);
+    void *ptr = cpio_get_entry(_component_cpio, cpio_size, component->which_elf, &name, &size);
     ZF_LOGF_IF(ptr == NULL, "Failed to get entry");
     void *elf_file = cpio_get_file(_component_cpio, cpio_size, name, &size);
     ZF_LOGF_IF(elf_file == NULL, "failed to get the elf");
@@ -517,6 +527,7 @@ setup_components()
     ZF_LOGD("Initialising ELFs...\n");
     ZF_LOGD(" Available ELFs:\n");
 
+
     for (int j = 0; ; j++) {
         const char *name = NULL;
         unsigned long size;
@@ -529,6 +540,11 @@ setup_components()
 
         component_t *component  = &(components[curr_component++]);
         component->free_slot_start = seL4_NumInitialCaps + 1;
+        component->which_elf = j;
+
+        if (j == 0) {
+            component->need_devices = 1;
+        }
 
         load_elf(name, component);
 
@@ -536,8 +552,6 @@ setup_components()
 
         //XXX: here we put the bootinfo frame into the new tcb
         setup_component_bootinfo(component);
-
-        /* move_caps(component); */
     }
 }
 
