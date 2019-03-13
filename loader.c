@@ -8,6 +8,8 @@
 #include <string.h>
 #include <stdint.h>
 #include <elf/elf.h>
+#include <elf/elf32.h>
+#include <elf/elf64.h>
 #include <sel4platsupport/platsupport.h>
 #include <cpio/cpio.h>
 #include <simple-default/simple-default.h>
@@ -19,6 +21,7 @@
 #include <sel4utils/util.h>
 #include <sel4utils/helpers.h>
 #include <sel4/sel4_arch/mapping.h>
+
 
 #define MAX_LOADABLE_REGIONS 20
 #define MAX_COMPONENTS 20
@@ -43,6 +46,9 @@ static seL4_CPtr syscall_ep;
 static frame_reg_t devices;
 
 extern char _component_cpio[];
+extern char _component_cpio_end[];
+static unsigned long cpio_size ;
+
 static seL4_CPtr free_slot_start, free_slot_end;
 static seL4_BootInfo *bootinfo;
 #define copy_addr (ROUND_UP(((uintptr_t)_end) + (PAGE_SIZE_4K * 3), 0x1000000))
@@ -153,24 +159,30 @@ static void load_elf(const char* elf_name, component_t *component)
 
 
     unsigned long elf_size;
-    void *elf_file = cpio_get_file(_component_cpio, elf_name, &elf_size);
+
+    void *elf_file = cpio_get_file(_component_cpio, cpio_size, elf_name, &elf_size);
     if (!elf_file) {
         ZF_LOGF("Didn't find the elf %s", elf_name);
     }
+    elf_t elf;
+    error = elf_newFile(elf_file, elf_size, &elf);
+    if (error < 0) {
+        ZF_LOGF("elf %s is invalid", elf_name);
+    }
 
-    component->pc = elf_getEntryPoint(elf_file);
+    component->pc = elf_getEntryPoint(&elf);
     component->num_regs = 0;
 
     ZF_LOGD("   ELF loading %s (from %p)... \n", elf_name, elf_file);
-    for (int i = 0; i < elf_getNumProgramHeaders(elf_file); i++) {
-        ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(elf_file, i));
+    for (int i = 0; i < elf_getNumProgramHeaders(&elf); i++) {
+        ZF_LOGD("    to %p... ", (void*)(uintptr_t)elf_getProgramHeaderVaddr(&elf, i));
 
-        size_t f_len = elf_getProgramHeaderMemorySize(elf_file, i);
-        size_t f_len_file = elf_getProgramHeaderFileSize(elf_file, i);
-        uintptr_t dest = elf_getProgramHeaderVaddr(elf_file, i);
-        uintptr_t src = (uintptr_t) elf_file + elf_getProgramHeaderOffset(elf_file, i);
+        size_t f_len = elf_getProgramHeaderMemorySize(&elf, i);
+        size_t f_len_file = elf_getProgramHeaderFileSize(&elf, i);
+        uintptr_t dest = elf_getProgramHeaderVaddr(&elf, i);
+        uintptr_t src = (uintptr_t) elf_getProgramSegment(&elf, i);
 
-        if (elf_getProgramHeaderType(elf_file, i) != PT_LOAD) {
+        if (elf_getProgramHeaderType(&elf, i) != PT_LOAD) {
             ZF_LOGD("Skipping non loadable header");
             continue;
         }
@@ -436,14 +448,19 @@ static int setup_component_bootinfo(component_t* component)
 
     const char *name = NULL;
     unsigned long size;
-    void *ptr = cpio_get_entry(_component_cpio, 0, &name, &size);
+    void *ptr = cpio_get_entry(_component_cpio, cpio_size, 0, &name, &size);
     ZF_LOGF_IF(ptr == NULL, "Failed to get entry");
-    void *elf_file = cpio_get_file(_component_cpio, name, &size);
+    void *elf_file = cpio_get_file(_component_cpio, cpio_size, name, &size);
     ZF_LOGF_IF(elf_file == NULL, "failed to get the elf");
+    elf_t elf;
+    error = elf_newFile(elf_file, size, &elf);
+    if (error < 0) {
+        ZF_LOGF("elf %s is invalid", name);
+    }
 
-    uint64_t min;
-    uint64_t max;
-    error = elf_getMemoryBounds(elf_file, 0, &min, &max);
+    seL4_Word min;
+    seL4_Word max;
+    error = elf_getMemoryBounds(&elf, 0, &min, &max);
     ZF_LOGD("Min is %lx, Max is %lx", min, max);
     ZF_LOGF_IF(error != 1, "failed to get memory bounds");
 
@@ -503,7 +520,7 @@ setup_components()
     for (int j = 0; ; j++) {
         const char *name = NULL;
         unsigned long size;
-        void *ptr = cpio_get_entry(_component_cpio, j, &name, &size);
+        void *ptr = cpio_get_entry(_component_cpio, cpio_size, j, &name, &size);
         if (ptr == NULL) {
             break;
         }
@@ -814,6 +831,7 @@ setup_compoennt(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
 int main(int argc, char *argv[])
 {
     platsupport_serial_setup_bootinfo_failsafe();
+    cpio_size = _component_cpio_end - _component_cpio;
 
     init_system();
     sort_untypeds(bootinfo);
