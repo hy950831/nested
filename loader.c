@@ -463,7 +463,7 @@ static int setup_component_bootinfo(component_t* component)
     move_ui_frames_cap(bi, component);
     move_untyped_cap(bi, component);
 
-    seL4_Word ui_end = ROUND_UP(component->max_vaddr, PAGE_SIZE_4K);
+    seL4_Word ui_end = component->max_vaddr;
     ZF_LOGD("ui_end is %lx", ui_end);
     bi->ipcBuffer = (void*)ui_end;
 
@@ -471,26 +471,6 @@ static int setup_component_bootinfo(component_t* component)
     if (sel4_page_pt) {
         seL4_ARCH_PageTable_Unmap(sel4_page_pt);
     }
-
-    seL4_CPtr ipc_frame = free_slot_start++;
-    create_object(seL4_ARCH_4KPage, 0, seL4_CapInitThreadCNode, ipc_frame);
-
-    error = seL4_ARCH_Page_Map(ipc_frame, component->vspace, ui_end, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
-    ZF_LOGF_IF(error, "Failed to map ipc frame");
-    error = seL4_TCB_SetIPCBuffer(component->tcb, (seL4_Word)ui_end, ipc_frame);
-    ZF_LOGF_IF(error, "Failed to set ipc buffer");
-
-    error = seL4_CNode_Copy(
-                component->cspace,
-                seL4_CapInitThreadIPCBuffer,
-                CONFIG_WORD_SIZE,
-
-                seL4_CapInitThreadCNode,
-                ipc_frame,
-                CONFIG_WORD_SIZE,
-                seL4_AllRights
-            );
-    ZF_LOGF_IF(error, "Failed to move ipcbuffer cap in error %u", error);
 
     error = seL4_ARCH_Page_Map(bi_frame, component->vspace, ui_end + PAGE_SIZE_4K, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
     ZF_LOGF_IFERR(error, "Failed to map bi_frame %u error", error);
@@ -505,7 +485,7 @@ static int setup_component_bootinfo(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move ipcbuffer cap in");
+    ZF_LOGF_IF(error, "Failed to move bi_frame cap in");
 
     return error;
 }
@@ -536,6 +516,7 @@ static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot
             );
     ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
 
+    // TODO: badge syscall_eq to identify which component is calling
     error = seL4_CNode_Copy(
                 cnode,
                 seL4_CapIRQControl,
@@ -590,7 +571,6 @@ setup_component(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
     seL4_CPtr new_tcb = free_slot_start++;
     seL4_CPtr new_cnode = free_slot_start++;
     seL4_CPtr new_vspace = component->vspace;
-
 
     seL4_Word init_thread_cnode_size = bootinfo->initThreadCNodeSizeBits;
 
@@ -653,6 +633,23 @@ static void setup_component_tcb(component_t *component)
     ZF_LOGF_IF(error, "Failed to write registers");
 
     error = seL4_TCB_ReadRegisters(tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
+
+    seL4_CPtr ipc_frame = free_slot_start++;
+    create_object(seL4_ARCH_4KPage, 0, seL4_CapInitThreadCNode, ipc_frame);
+    error = seL4_ARCH_Page_Map(ipc_frame, component->vspace, component->max_vaddr, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
+    ZF_LOGF_IF(error, "Failed to map ipc frame");
+    error = seL4_TCB_SetIPCBuffer(component->tcb, (seL4_Word)component->max_vaddr, ipc_frame);
+    ZF_LOGF_IF(error, "Failed to set ipc buffer");
+    error = seL4_CNode_Copy(
+                component->cspace,
+                seL4_CapInitThreadIPCBuffer,
+                CONFIG_WORD_SIZE,
+                seL4_CapInitThreadCNode,
+                ipc_frame,
+                CONFIG_WORD_SIZE,
+                seL4_AllRights
+            );
+    ZF_LOGF_IF(error, "Failed to move ipcbuffer cap in error %u", error);
 }
 
 static void
