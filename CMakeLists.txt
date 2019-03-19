@@ -18,7 +18,6 @@ CreateComponent(
     TARGET component1
     MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/.manifest.obj"
     C_FILES "client.c" "timer.c")
-
 list(APPEND cpio_files "$<TARGET_FILE:component1>")
 
 # second capdl loader app
@@ -26,8 +25,14 @@ CreateComponent(
     TARGET component2
     MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/manifest.py"
     C_FILES "program_1.c")
-
 list(APPEND cpio_files "$<TARGET_FILE:component2>")
+
+# second capdl loader app
+CreateComponent(
+    TARGET component3
+    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/manifest_component3.py"
+    C_FILES "program_2.c")
+list(APPEND cpio_files "$<TARGET_FILE:component3>")
 
 # the combined loader
 add_executable(loader EXCLUDE_FROM_ALL loader.c)
@@ -35,6 +40,7 @@ target_link_libraries(loader sel4tutorials)
 
 MakeCPIO(archive_final.o "${cpio_files}"
     CPIO_SYMBOL _component_cpio
+    DEPENDS ${cpio_files}
 )
 
 add_executable(loader_final EXCLUDE_FROM_ALL
@@ -42,6 +48,6 @@ add_executable(loader_final EXCLUDE_FROM_ALL
     archive_final.o
     )
 target_link_libraries(loader_final Configuration muslc sel4 elf cpio sel4platsupport sel4utils sel4muslcsys)
-add_dependencies(loader_final component1 component2)
+add_dependencies(loader_final component1 component2 component3)
 
 DeclareRootserver(loader_final)

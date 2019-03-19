@@ -10,7 +10,6 @@
 extern seL4_CPtr free_slot;
 extern seL4_CPtr untyped_cap_start;
 
-void init_system(void);
 void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb);
 void sayhello();
 
@@ -22,23 +21,8 @@ int main(int argc, char *argv[])
 {
     platsupport_serial_setup_bootinfo_failsafe();
 
-
-    init_system();
-
     create_child(seL4_CapInitThreadCNode, seL4_CapInitThreadVSpace, seL4_CapInitThreadTCB);
-
-    printf("Done, suspend init thread\n");
-    seL4_TCB_Suspend(seL4_CapInitThreadTCB);
-
     return 0;
-}
-
-void init_system(void)
-{
-    // TODO: do some kind of system initialisation here
-    /* bi = platsupport_get_bootinfo(); */
-    /* simple_t simple; */
-    /* simple_default_init_bootinfo(&simple, bi); */
 }
 
 void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tcb)
@@ -72,6 +56,9 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
 
     error = seL4_TCB_Resume(new_tcb);
     ZF_LOGF_IF(error, "Failed to resume tcb");
+
+    printf("Done, suspend init thread\n");
+    seL4_TCB_Suspend(seL4_CapInitThreadTCB);
 }
 
 void sayhello()
@@ -79,5 +66,5 @@ void sayhello()
     printf("This is the sayhello program from another capdl loader and then i will say: \n");
     printf("hello\n");
     printf("After me saying hello, the timer client from another capdl loader should resume after 3 second sleep\n");
-    while(1);
+    while (1) {}
 }

@@ -61,7 +61,6 @@ int main(void) {
         .id = TTC0_TIMER1
     };
 
-
     /* put the interrupt handle for TTC0_TIMER1_IRQ in the irq_handler cslot */
     error = seL4_IRQControl_Get(irq_control, TTC0_TIMER1_IRQ, cnode, irq_handler, seL4_WordBits);
     ZF_LOGF_IF(error, "Failed to get irq capability");
