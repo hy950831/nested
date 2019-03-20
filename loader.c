@@ -189,7 +189,7 @@ static void load_elf(const char* elf_name, component_t *component)
     create_object(seL4_ARM_PageDirectoryObject, 0, seL4_CapInitThreadCNode, new_vroot);
 #endif
     error = seL4_ARCH_ASIDPool_Assign(seL4_CapInitThreadASIDPool, new_vroot);
-    ZF_LOGF_IF(error, "Failed to assign page to asid_pool");
+    ZF_LOGF_IFERR(error, "Failed to assign page to asid_pool");
 
     component->vspace = new_vroot;
 
@@ -281,7 +281,7 @@ static void load_elf(const char* elf_name, component_t *component)
                 sel4_page_pt = get_slot(component->elf_index);
                 create_object(seL4_ARCH_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
                 error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
-                ZF_LOGF_IF(error, "Failed to map new pt");
+                ZF_LOGF_IFERR(error, "Failed to map new pt");
                 error = seL4_ARCH_Page_Map(sel4_page, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, attribs);
             }
 
@@ -319,7 +319,6 @@ static void load_elf(const char* elf_name, component_t *component)
                 ZF_LOGF_IFERR(error, "");
             }
 
-
             vaddr += len;
         }
 
@@ -353,26 +352,26 @@ static void load_elf(const char* elf_name, component_t *component)
                     seL4_CPtr new_pdpt = get_slot(component->elf_index);
                     create_object(seL4_X86_PDPTObject, 0, seL4_CapInitThreadCNode, new_pdpt);
                     error = seL4_X86_PDPT_Map(new_pdpt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
-                    ZF_LOGF_IF(error, "Failed to map pdpt");
+                    ZF_LOGF_IFERR(error, "Failed to map pdpt");
 
                     seL4_CPtr new_pd = get_slot(component->elf_index);
                     create_object(seL4_X86_PageDirectoryObject, 0, seL4_CapInitThreadCNode, new_pd);
                     error = seL4_X86_PageDirectory_Map(new_pd, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
-                    ZF_LOGF_IF(error, "Failed to map pd");
+                    ZF_LOGF_IFERR(error, "Failed to map pd");
 
                     seL4_CPtr new_pt = get_slot(component->elf_index);
                     create_object(seL4_X86_PageTableObject, 0, seL4_CapInitThreadCNode, new_pt);
                     error = seL4_X86_PageTable_Map(new_pt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
-                    ZF_LOGF_IF(error, "Failed to map pt");
+                    ZF_LOGF_IFERR(error, "Failed to map pt");
 #else
                     seL4_CPtr new_pdpt = get_slot(component->elf_index);
                     create_object(seL4_ARM_PageTableObject, 0, seL4_CapInitThreadCNode, new_pdpt);
                     error = seL4_ARM_PageTable_Map(new_pdpt, new_vroot, vaddr, seL4_ARCH_Default_VMAttributes);
-                    ZF_LOGF_IF(error, "Failed to map pt");
+                    ZF_LOGF_IFERR(error, "Failed to map pt");
 #endif
                 }
                 error = seL4_ARCH_Page_Map(sel4_page, new_vroot, vaddr, seL4_AllRights, attribs);
-                ZF_LOGF_IF(error, "Failed to map page into new vroot %u", error);
+                ZF_LOGF_IFERR(error, "Failed to map page into new vroot %u", error);
             }
 
             vaddr += len;
@@ -396,7 +395,7 @@ static void move_ui_frames_cap(seL4_BootInfo* bi, component_t* component)
                                         j,
                                         CONFIG_WORD_SIZE
                                        );
-            ZF_LOGF_IF(error, "Failed to move ui frame caps into bi");
+            ZF_LOGF_IFERR(error, "Failed to move ui frame caps into bi");
         }
     }
     seL4_Word end = component->free_slot_start;
@@ -431,7 +430,7 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
                     seL4_AllRights
                 );
 
-        ZF_LOGF_IF(error, "Failed to move untyped");
+        ZF_LOGF_IFERR(error, "Failed to move untyped");
         bi->untypedList[i].sizeBits = 22;
     }
 
@@ -479,11 +478,11 @@ static int setup_component_bootinfo(component_t* component)
         sel4_page_pt = get_slot(component->elf_index);
         create_object(seL4_ARCH_PageTableObject, 0, seL4_CapInitThreadCNode, sel4_page_pt);
         error = seL4_ARCH_PageTable_Map(sel4_page_pt, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_ARCH_Default_VMAttributes);
-        ZF_LOGF_IF(error, "Failed to map new pt");
+        ZF_LOGF_IFERR(error, "Failed to map new pt");
 
         error = seL4_ARCH_Page_Map(bi_frame, seL4_CapInitThreadVSpace, (seL4_Word)copy_addr, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
     }
-    ZF_LOGF_IF(error, "Failed to map bi frame");
+    ZF_LOGF_IFERR(error, "Failed to map bi frame");
 
     seL4_BootInfo* bi;
     bi = (void*)copy_addr;
@@ -522,12 +521,11 @@ static int setup_component_bootinfo(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move bi_frame cap in");
+    ZF_LOGF_IFERR(error, "Failed to move bi_frame cap in");
 
     return error;
 }
 
-/* static int setup_component_cnode(seL4_CPtr cnode, seL4_CPtr tcb, seL4_CPtr vroot) */
 static int setup_component_cnode(component_t* component)
 {
     int error =  0;
@@ -545,7 +543,7 @@ static int setup_component_cnode(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move domain cap into cnode");
 
     error = seL4_CNode_Copy(
                 cnode,
@@ -556,7 +554,7 @@ static int setup_component_cnode(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move domain cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move domain cap into cnode");
 
     //badge syscall_eq to identify which component is calling
     error = seL4_CNode_Mint(
@@ -569,7 +567,7 @@ static int setup_component_cnode(component_t* component)
                 seL4_AllRights,
                 component->elf_index
             );
-    ZF_LOGF_IF(error, "Failed to move irqcontrol cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move irqcontrol cap into cnode");
 
     error = seL4_CNode_Copy(
                 cnode,
@@ -580,7 +578,7 @@ static int setup_component_cnode(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move tcb cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move tcb cap into cnode");
 
     error = seL4_CNode_Copy(
                 cnode, // to cnode
@@ -591,7 +589,7 @@ static int setup_component_cnode(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move cnode cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move cnode cap into cnode");
 
 
     error = seL4_CNode_Copy(
@@ -604,11 +602,11 @@ static int setup_component_cnode(component_t* component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move cnode cap into cnode");
+    ZF_LOGF_IFERR(error, "Failed to move cnode cap into cnode");
 }
 
 static void
-setup_component(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component)
+initialise_component(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component)
 {
     int error;
     seL4_CPtr new_tcb = get_slot(component->elf_index);
@@ -639,7 +637,7 @@ setup_component(seL4_CPtr root_cnode, seL4_CPtr root_tcb, component_t *component
                 seL4_CNode_CapData_new(0, CONFIG_WORD_SIZE - cnode_size).words[0]
             );
 
-    ZF_LOGF_IF(error, "Failed to mint the new cnode cap");
+    ZF_LOGF_IFERR(error, "Failed to mint the new cnode cap");
 
     component->cspace = minted_new_cnode;
     component->vspace = new_vspace;
@@ -656,33 +654,36 @@ static void setup_component_tcb(component_t *component)
     int error;
 
     error = seL4_TCB_Configure(tcb, 0, cspace, 0, vspace, 0, 0, 0);
-    ZF_LOGF_IF(error, "Failed to configure tcb");
+    ZF_LOGF_IFERR(error, "Failed to configure tcb");
     error = seL4_TCB_SetPriority(tcb, seL4_CapInitThreadTCB, 255);
-    ZF_LOGF_IF(error, "Failed to set priority");
+    ZF_LOGF_IFERR(error, "Failed to set priority");
     error = seL4_TCB_SetMCPriority(tcb, seL4_CapInitThreadTCB, 255);
-    ZF_LOGF_IF(error, "Failed to set priority");
+    ZF_LOGF_IFERR(error, "Failed to set priority");
 
     seL4_UserContext regs = {0};
     error = seL4_TCB_ReadRegisters(tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
-    ZF_LOGF_IF(error, "Failed to read registers");
+    ZF_LOGF_IFERR(error, "Failed to read registers");
 
     // here we set the ip to _sel4_start since we set the entry point to _sel4_start, since it
     // will set the stack pointer, we don't need to pass in a stack pointer in here
     sel4utils_arch_init_local_context((void*)component->pc, 0, 0, 0, 0, &regs);
 
+#ifdef CONFIG_ARCH_ARM
+    // setup different register to the bootinfo frame vaddr for different archs
     regs.r0 = component->bi_vaddr;
+#endif
 
     error = seL4_TCB_WriteRegisters(tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
-    ZF_LOGF_IF(error, "Failed to write registers");
+    ZF_LOGF_IFERR(error, "Failed to write registers");
 
     error = seL4_TCB_ReadRegisters(tcb, 0, 0, sizeof(regs) / sizeof(seL4_Word), &regs);
 
     seL4_CPtr ipc_frame = get_slot(component->elf_index);
     create_object(seL4_ARCH_4KPage, 0, seL4_CapInitThreadCNode, ipc_frame);
     error = seL4_ARCH_Page_Map(ipc_frame, component->vspace, component->max_vaddr, seL4_AllRights, seL4_ARCH_Default_VMAttributes);
-    ZF_LOGF_IF(error, "Failed to map ipc frame");
+    ZF_LOGF_IFERR(error, "Failed to map ipc frame");
     error = seL4_TCB_SetIPCBuffer(component->tcb, (seL4_Word)component->max_vaddr, ipc_frame);
-    ZF_LOGF_IF(error, "Failed to set ipc buffer");
+    ZF_LOGF_IFERR(error, "Failed to set ipc buffer");
     error = seL4_CNode_Copy(
                 component->cspace,
                 seL4_CapInitThreadIPCBuffer,
@@ -692,10 +693,10 @@ static void setup_component_tcb(component_t *component)
                 CONFIG_WORD_SIZE,
                 seL4_AllRights
             );
-    ZF_LOGF_IF(error, "Failed to move ipcbuffer cap in error %u", error);
+    ZF_LOGF_IFERR(error, "Failed to move ipcbuffer cap");
 }
 
-static void setup_component_wrapper(int i)
+static void setup_component(int i)
 {
     const char *name = NULL;
     unsigned long size;
@@ -716,7 +717,7 @@ static void setup_component_wrapper(int i)
 
     load_elf(name, component);
 
-    setup_component(seL4_CapInitThreadCNode, seL4_CapInitThreadTCB, component);
+    initialise_component(seL4_CapInitThreadCNode, seL4_CapInitThreadTCB, component);
     setup_component_tcb(component);
     //XXX: here we put the bootinfo frame into the new tcb
     setup_component_bootinfo(component);
@@ -735,7 +736,7 @@ setup_components()
         if (ptr == NULL) {
             break;
         }
-        setup_component_wrapper(j);
+        setup_component(j);
     }
 }
 
@@ -881,13 +882,13 @@ static void init_system(void)
     init_copy_frame();
 }
 
-static int reload(int who)
+static int shutdown(int who)
 {
-    ZF_LOGD("reloading %d", who);
+    ZF_LOGD("shutting down %d", who);
     component_t *component = &(components[who]);
     seL4_TCB_Suspend(component->tcb);
 
-    ZF_LOGD("delete all pages");
+    ZF_LOGD("delete all pages for this thread");
     int error;
     for (int i = component->ui_vspace_start_cap; i < component->ui_vspace_end_cap; ++i) {
         error = seL4_CNode_Delete(component->cspace, i, CONFIG_WORD_SIZE);
@@ -905,9 +906,16 @@ static int reload(int who)
             ZF_LOGF_IFERR(error, "Failed to delete cap");
         }
     }
+    return 0;
+}
 
-    ZF_LOGD("setup this component again");
-    setup_component_wrapper(who);
+static int reload(int who)
+{
+    shutdown(who);
+    component_t *component = &(components[who]);
+
+    ZF_LOGD("setup this component %d again", who);
+    setup_component(who);
 
     seL4_TCB_Resume(component->tcb);
     return 0;
@@ -939,6 +947,8 @@ int main(int argc, char *argv[])
     seL4_CPtr caller = get_slot(-1);
 
 #define RELOADINV nInvocationLabels + 1
+#define SHUTDOWNINV nInvocationLabels + 2
+
     int reload_count = 0;
 
     while (1) {
@@ -971,10 +981,15 @@ int main(int argc, char *argv[])
             break;
         }
         case RELOADINV: {
-            ZF_LOGD("Reboot request");
             printf("the %dth reload\n", reload_count++);
             curr_untyped = 0;
             result = reload(badge);
+            seL4_DebugDumpScheduler();
+            break;
+        }
+        case SHUTDOWNINV: {
+            curr_untyped = 0;
+            result = shutdown(badge);
             seL4_DebugDumpScheduler();
             break;
         }

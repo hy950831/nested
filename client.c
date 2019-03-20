@@ -34,5 +34,7 @@ int main(int argc, char **argv) {
 
     printf("timer client wakes up\ngot the current time:\n %zu\n", msg);
 
+    seL4_Call(endpoint, tag);
+
     return 0;
 }

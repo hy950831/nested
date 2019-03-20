@@ -116,5 +116,13 @@ int main(void) {
     /* send the modified message back */
     seL4_ReplyRecv(endpoint, tag, &sender_badge);
 
+    /* printf("this component is going to be rebooted\n"); */
+    printf("this component is going to shut down\n");
+    tag = seL4_MessageInfo_new(nInvocationLabels + 1, 0, 0, 0);
+    seL4_Call(irq_control, tag);
+
+    printf("nani???");
+    while(1){}
+
     return 0;
 }

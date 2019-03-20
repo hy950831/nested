@@ -15,8 +15,9 @@ void reboot()
 {
     printf("this component is going to be rebooted\n");
     seL4_MessageInfo_t tag = seL4_MessageInfo_new(nInvocationLabels + 1, 0, 0, 0);
-    seL4_Call(seL4_CapIRQControl, tag);
+    /* seL4_Call(seL4_CapIRQControl, tag); */
     printf("back?????\n");
+    while(1){}
 }
 
 int main(int argc, char *argv[])

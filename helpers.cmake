@@ -1,7 +1,3 @@
-function(SetSeL4StartComponent target)
-    set_property(TARGET ${target} APPEND_STRING PROPERTY LINK_FLAGS " -u _sel4_start_component -e _sel4_start_component ")
-endfunction(SetSeL4StartComponent)
-
 function(CreateComponent)
     set(oneValueArgs TARGET MANIFEST)
     set(multiValueArgs C_FILES)
@@ -12,7 +8,6 @@ function(CreateComponent)
 
     foreach(item ${CREATE_COMPONENT_C_FILES})
         list(APPEND pp_cspaces ${CMAKE_CURRENT_BINARY_DIR}/cspace_${item})
-        list(APPEND pp_cspaces_stripped cspace_${item})
     endforeach()
 
     foreach(item ${CREATE_COMPONENT_C_FILES})
@@ -30,7 +25,7 @@ function(CreateComponent)
 
     foreach(i RANGE ${len})
         list(GET pp_elfs ${i} elf)
-        list(GET pp_cspaces_stripped ${i} cspace)
+        list(GET pp_cspaces ${i} cspace)
         list(GET CREATE_COMPONENT_C_FILES ${i} cfile)
 
         set_property(SOURCE ${cspace} PROPERTY GENERATED 1)

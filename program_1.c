@@ -43,7 +43,7 @@ void create_child(seL4_CPtr root_cnode, seL4_CPtr root_vspace, seL4_CPtr root_tc
     error = seL4_TCB_Configure(new_tcb, 0, new_cnode, 0, root_vspace, 0, 0, 0);
     ZF_LOGF_IF(error, "Failed to configure tcb");
 
-    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 251);
+    error = seL4_TCB_SetPriority(new_tcb, root_tcb, 253);
     ZF_LOGF_IF(error, "Failed to set priority");
 
     seL4_UserContext regs = {0};
