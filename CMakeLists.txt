@@ -16,22 +16,22 @@ include(helpers.cmake)
 
 CreateComponent(
     TARGET component1
-    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/.manifest.obj"
-    C_FILES "client.c" "timer.c")
+    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/component1/.manifest.obj"
+    C_FILES "component1/client.c" "component1/timer.c")
 list(APPEND components "$<TARGET_FILE:component1>")
 
 # second capdl loader app
 CreateComponent(
     TARGET component2
-    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/manifest.py"
-    C_FILES "program_1.c")
+    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/component2/manifest.py"
+    C_FILES "component2/program_1.c")
 list(APPEND components "$<TARGET_FILE:component2>")
 
 # second capdl loader app
 CreateComponent(
     TARGET component3
-    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/manifest_component3.py"
-    C_FILES "program_2.c")
+    MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/component3/manifest.py"
+    C_FILES "component3/program_2.c" "component3/program_3.c" )
 list(APPEND components "$<TARGET_FILE:component3>")
 
 # the combined loader
@@ -41,7 +41,7 @@ target_link_libraries(loader sel4tutorials)
 MakeCPIO(archive_final.o "${components}"
     CPIO_SYMBOL _component_cpio
     DEPENDS ${components}
-)
+    )
 
 add_executable(loader_final EXCLUDE_FROM_ALL
     loader.c

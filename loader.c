@@ -591,7 +591,6 @@ static int setup_component_cnode(component_t* component)
             );
     ZF_LOGF_IFERR(error, "Failed to move cnode cap into cnode");
 
-
     error = seL4_CNode_Copy(
                 cnode, // to cnode
                 seL4_CapInitThreadASIDPool, // to slot

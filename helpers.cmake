@@ -11,7 +11,8 @@ function(CreateComponent)
     endforeach()
 
     foreach(item ${CREATE_COMPONENT_C_FILES})
-        strip_last_extension(name ${item})
+        get_filename_component(name ${item} NAME)
+        strip_last_extension(name ${name})
         list(APPEND pp_elfs "${name}")
     endforeach()
 
@@ -63,3 +64,4 @@ macro(strip_last_extension OUTPUT_VAR FILENAME)
     #from http://stackoverflow.com/questions/30049180/strip-filename-shortest-extension-by-cmake-get-filename-removing-the-last-ext
     string(REGEX REPLACE "\\.[^.]*$" "" ${OUTPUT_VAR} ${FILENAME})
 endmacro()
+
