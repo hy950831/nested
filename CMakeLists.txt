@@ -10,9 +10,9 @@
 #
 # @TAG(DATA61_BSD)
 #
+include(helpers.cmake)
 ImportCapDL()
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -u __vsyscall_ptr")
-include(helpers.cmake)
 
 add_subdirectory(component1)
 add_subdirectory(component2)
@@ -21,10 +21,6 @@ add_subdirectory(component3)
 list(APPEND components "$<TARGET_FILE:component1>")
 list(APPEND components "$<TARGET_FILE:component2>")
 list(APPEND components "$<TARGET_FILE:component3>")
-
-# the combined loader
-add_executable(loader EXCLUDE_FROM_ALL loader.c)
-target_link_libraries(loader sel4tutorials)
 
 MakeCPIO(archive_final.o "${components}"
     CPIO_SYMBOL _component_cpio
@@ -35,7 +31,8 @@ add_executable(loader_final EXCLUDE_FROM_ALL
     loader.c
     archive_final.o
     )
+
 target_link_libraries(loader_final Configuration muslc sel4 elf cpio sel4platsupport sel4utils sel4muslcsys)
-add_dependencies(loader_final  component2 component3)
+add_dependencies(loader_final component1 component2 component3)
 
 DeclareRootserver(loader_final)
