@@ -51,6 +51,7 @@ typedef struct {
     seL4_Word max_vaddr;
     seL4_Word elf_index;
     seL4_Word free_slot_start;
+    // TODO: determine which devices to pass into each component
     seL4_Word need_devices;
     seL4_Word num_regs;
     frame_reg_t regs[20];
@@ -93,7 +94,6 @@ seL4_Word curr_component = 0;
 
 static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_Word slot)
 {
-    static int used_up_count = 0;
     int error;
     do {
         error = seL4_Untyped_Retype(untyped_cptrs[curr_untyped], type, size, root, 0, 0, slot, 1);
@@ -103,12 +103,7 @@ static void create_object(seL4_Word type, seL4_Word size, seL4_Word root, seL4_W
     } while (error && curr_untyped < num_untyped);
 
     if (error) {
-        if (used_up_count = 0) {
-            curr_untyped = 0;
-            used_up_count += 1;
-        } else {
-            ZF_LOGF("out of untyped memory");
-        }
+        ZF_LOGF("out of untyped memory");
     }
 }
 
@@ -467,6 +462,11 @@ static void move_untyped_cap(seL4_BootInfo* bi, component_t* component)
     bi->empty.end = 25000;
 }
 
+static void pass_ui_frames_paging_cap(seL4_BootInfo* bi, component_t* component)
+{
+    // TODO: pass userImagePaging caps
+}
+
 static int setup_component_bootinfo(component_t* component)
 {
     seL4_CPtr bi_frame = get_slot(component->elf_index);
@@ -497,12 +497,15 @@ static int setup_component_bootinfo(component_t* component)
     bi->extraBIPages.end = 0;
 
     move_ui_frames_cap(bi, component);
+    pass_ui_frames_paging_cap(bi, component);
     move_untyped_cap(bi, component);
 
     seL4_Word ui_end = component->max_vaddr;
     ZF_LOGD("ui_end is %lx", ui_end);
     bi->ipcBuffer = (void*)ui_end;
 
+    // NOTE: bi_frame is unmapped from copy_addr here
+    // don't try to write to it after this line
     seL4_ARCH_Page_Unmap(bi_frame);
     if (sel4_page_pt) {
         seL4_ARCH_PageTable_Unmap(sel4_page_pt);
@@ -922,7 +925,7 @@ static int reload(int who)
 
 int main(int argc, char *argv[])
 {
-    _zf_log_output_lvl = 5;
+    /* _zf_log_output_lvl = 5; */
     platsupport_serial_setup_bootinfo_failsafe();
     cpio_size = _component_cpio_end - _component_cpio;
     for (int i = 0; i < NUM_FREE_SLOTS_MAX; ++i) {
@@ -965,17 +968,6 @@ int main(int argc, char *argv[])
             seL4_Word mr1 = seL4_GetMR(1);
             seL4_Word mr2 = seL4_GetMR(2);
             result = seL4_IRQControl_Get(seL4_CapIRQControl, mr0, new_cap, mr1, mr2);
-            seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
-            break;
-        }
-        case IRQSetIRQHandler: {
-            assert(seL4_MessageInfo_get_extraCaps(tag) == 1);
-            result = seL4_IRQHandler_SetNotification(seL4_CapIRQControl, new_cap);
-            seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
-            break;
-        }
-        case IRQAckIRQ: {
-            result = seL4_IRQHandler_Ack(seL4_CapIRQControl);
             seL4_Send(caller, seL4_MessageInfo_new(result, 0, 0, 0));
             break;
         }
